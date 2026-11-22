@@ -5,7 +5,8 @@
 """
 from pydantic import BaseModel, Field
 
-from essay.rubric import grader_persona, rubric_text
+from core.grammar.rules import FIX_RULES
+from programs.essay.rubric import grader_persona, rubric_text
 
 
 class ModelScores(BaseModel):
@@ -20,18 +21,9 @@ class ModelOutput(BaseModel):
     comment: str = Field(description="Short overall comment for the student.")
 
 
-CORRECTION_RULES = """How to correct (VERY IMPORTANT):
-- Fix ONLY real errors: grammar, spelling, capitalization, punctuation, and missing or
-  wrong small words (articles, prepositions, verb forms) that make a sentence incorrect.
-- Do NOT rewrite or "improve" sentences that are already correct.
-  Keep the student's own words, word choices, and ideas. Do not replace a correct word with a
-  "better" one, and do not add new sentences or new information.
-  Example: "I visited Guam in U.S.A." -> "I visited Guam in the U.S.A." (add only "the";
-  do NOT change it to "Guam, America").
-- NEVER replace names of people, places, schools, or classes (e.g., "Tom", "Navy 1M",
-  "샘물3M", "Jeju"). You may only fix their capitalization and spacing
-  (e.g., "navy1m" -> "Navy 1M"). Never insert the student's grade level into the essay.
-- When a sentence is unclear, make the smallest change that makes it grammatical.
+# 공통 교정 규칙(core/grammar/rules.py) + 에세이 전용 규칙
+CORRECTION_RULES = f"""How to correct (VERY IMPORTANT):
+{FIX_RULES}
 - Keep the same line breaks and paragraph order as the original.
 - Return the WHOLE essay in "corrected", including sentences that needed no changes."""
 

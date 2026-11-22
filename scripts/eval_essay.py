@@ -4,7 +4,7 @@
   .venv/bin/python scripts/eval_essay.py run [개수] [--no-think]   # 채점용 데이터로 실행 (중단 후 이어서 가능)
   .venv/bin/python scripts/eval_essay.py report                  # 결과 요약
 결과:
-  data/processed/eval_runs/<이름>.jsonl   한 편씩 결과
+  data/essay/processed/eval_runs/<이름>.jsonl   한 편씩 결과
 지표:
   - 등급 일치율: 서버가 계산한 A/B/C vs 선생님 등급
   - 수정 위치 일치: 모델이 고친 곳 중 선생님도 고친 비율(정밀도), 선생님이 고친 곳 중 모델도 고친 비율(재현율)
@@ -24,8 +24,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from app.main import EssayRequest, essay  # noqa: E402
 
-EVAL_FILE = ROOT / "data/processed/essay_topic_100_eval.jsonl"
-RUN_DIR = ROOT / "data/processed/eval_runs"
+EVAL_FILE = ROOT / "data/essay/processed/essay_topic_100_eval.jsonl"
+RUN_DIR = ROOT / "data/essay/processed/eval_runs"
 TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)*|[^\sA-Za-z0-9]")
 
 

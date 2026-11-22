@@ -1,12 +1,12 @@
 """선생님 첨삭 원본(JSON) -> 통일된 JSONL + 검증용 미리보기 HTML
 
 사용법:
-  .venv/bin/python scripts/build_teacher_dataset.py data/essay_topic_100.json
+  .venv/bin/python scripts/build_teacher_dataset.py data/essay/essay_topic_100.json
 결과 (<이름> = 입력 파일 이름, 예: essay_topic_100):
-  data/processed/<이름>_normalized.jsonl   한 줄에 한 건
-  data/processed/<이름>_train.jsonl        학습·예시용
-  data/processed/<이름>_eval.jsonl         채점용 (약 100건)
-  data/processed/<이름>_preview.html       선생님 원본 vs 우리 렌더링 비교 (브라우저로 열기)
+  data/essay/processed/<이름>_normalized.jsonl   한 줄에 한 건
+  data/essay/processed/<이름>_train.jsonl        학습·예시용
+  data/essay/processed/<이름>_eval.jsonl         채점용 (약 100건)
+  data/essay/processed/<이름>_preview.html       선생님 원본 vs 우리 렌더링 비교 (브라우저로 열기)
 """
 import json
 import random
@@ -15,10 +15,10 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from essay.render import render  # noqa: E402
-from essay.teacher_parse import parse_teacher  # noqa: E402
+from programs.essay.render import render  # noqa: E402
+from programs.essay.teacher_parse import parse_teacher  # noqa: E402
 
-src = Path(sys.argv[1] if len(sys.argv) > 1 else "data/essay_topic_100.json")
+src = Path(sys.argv[1] if len(sys.argv) > 1 else "data/essay/essay_topic_100.json")
 out_dir = src.parent / "processed"  # 원본(data/)과 섞이지 않게 생성 파일은 따로
 out_dir.mkdir(mode=0o700, exist_ok=True)
 stem = src.stem

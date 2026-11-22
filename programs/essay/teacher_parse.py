@@ -15,7 +15,7 @@ import re
 from difflib import SequenceMatcher
 from html.parser import HTMLParser
 
-from essay.clean import strip_scaffolding
+from programs.essay.clean import strip_scaffolding
 
 BLOCK_TAGS = {"p", "div", "li", "h1", "h2", "h3", "h4", "tr"}
 DEL_TAGS = {"s", "strike", "del"}

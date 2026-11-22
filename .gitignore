@@ -7,7 +7,9 @@ __pycache__/
 .env
 
 # 아이들 글·음성·이름이 들어간 데이터 (저장소에 올리지 않음)
+# 전부 data/ 아래에 둔다: data/essay/, data/stt/audio/, data/stt/reports/, data/stt/outputs/
 data/
+# 예전 위치 (다른 컴퓨터에서 아직 옮기기 전이어도 실수로 올라가지 않게)
 audio/
 outputs/
 reports/
