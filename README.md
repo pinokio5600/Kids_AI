@@ -32,6 +32,19 @@ data/                 아이들 데이터 (git 제외, 아래 참고)
 | `POST /essay` | 에세이 첨삭(틀린 것만 고침) + 채점(Grammar 5 / Structure 5 / Content 10) + 아이용 HTML |
 | `POST /grammar` | 영어 문법 교정 + 고친 이유 |
 | `POST /chat`, `POST /chat/stream` | 일반 대화 (대화 기록, 스트리밍) |
+| `POST /portfolio` | 포트폴리오 영상(대본 읽기) 채점: 점수(정확도 60 / 유창성 25 / 명확도 15) + 다른 곳 목록 + 리포트 .md |
+| `GET /portfolio/scripts` | 서버에 저장된 대본 이름 목록 |
+
+`/portfolio` (multipart/form-data)
+- `file`: 녹음/영상 (mp4, m4a, wav 등, 기본 최대 300MB: `PORTFOLIO_MAX_UPLOAD_MB`)
+- `script` (대본 전문) 또는 `script_name` (저장된 대본 이름, 예: `hercules`) 중 하나
+- `names`: 정확도에서 뺄 이름, 쉼표로 (선택)
+- STT 라이브러리(`core/stt/requirements.txt`)가 있어야 한다. 없으면 503, 다른 API는 그대로 동작
+- whisper 모델은 첫 요청 때 불러온다 (`STT_MODEL` 기본 large-v3, `STT_DEVICE` 기본 cuda). 채점은 한 번에 하나씩
+
+```
+curl -H "X-API-Key: $KEY" -F file=@kid.mp4 -F script_name=hercules http://localhost:8000/portfolio
+```
 
 에세이 (`programs/essay/`)
 - 흐름: `clean.py` 과제 양식 정리 -> `prompt.py` 지시문 (core/grammar/rules.py 포함) -> `grade.py` 모델 호출·점수 -> `render.py` 첨삭 HTML

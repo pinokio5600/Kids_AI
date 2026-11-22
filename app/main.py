@@ -1,10 +1,13 @@
 import json
 import os
 import secrets
+import tempfile
+from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Security, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, model_validator
@@ -196,3 +199,112 @@ class EssayRequest(BaseModel):
 async def essay(req: EssayRequest):
     """에세이를 첨삭(틀린 것만 고침)하고 채점해서 아이용 HTML과 함께 반환"""
     return await grade_essay(req.essay, req.topic, req.level_name, req.model, req.think)
+
+
+# ---------------------------------------------------------------- 포트폴리오 영상 채점
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "programs" / "portfolio" / "scripts"
+MAX_UPLOAD_MB = int(os.getenv("PORTFOLIO_MAX_UPLOAD_MB", "300"))
+
+
+class PortfolioCheck(BaseModel):
+    start: float
+    end: float
+    ref_score: float
+    hyp_score: float
+    omit_score: float | None
+    gap: float
+
+
+class PortfolioRow(BaseModel):
+    t: float          # 녹음에서 몇 초 지점
+    kind: str         # 다르게 읽음 / 빠뜨림 / 추가로 말함 / 불분명/빠뜨림 / 대본 밖 발화
+    script: str       # 대본 문구
+    said: str         # 받아 적은 문구
+    verdict: str      # 통과 (모델이 잘못 들음) / 확인 필요 / 참고
+    check: PortfolioCheck | None
+
+
+class PortfolioPoints(BaseModel):
+    accuracy: float   # /60
+    fluency: float    # /25
+    clarity: float    # /15
+
+
+class PortfolioScore(BaseModel):
+    total: float
+    grade: str
+    points: PortfolioPoints
+    accuracy: float   # 0~1, 이름 뺀 대본 단어 중 맞게 읽은 비율
+    n_content: int
+    n_names: int
+    wpm: float
+    pauses: int
+    confidence: float
+
+
+class PortfolioResponse(BaseModel):
+    model: str
+    duration_sec: float
+    script_words: int
+    score: PortfolioScore | None  # None: 목소리가 거의 안 들려 채점 불가
+    rate: float                   # 대본 일치율(%)
+    matched: int
+    todo: int                     # 선생님 확인 필요 개수
+    rows: list[PortfolioRow]
+    transcript: str
+    report_md: str
+
+
+@app.get("/portfolio/scripts", dependencies=[Depends(verify_api_key)])
+async def portfolio_scripts():
+    """서버에 저장된 대본 이름 목록 (/portfolio의 script_name에 사용)"""
+    return {"scripts": sorted(p.stem for p in SCRIPTS_DIR.glob("*.txt"))}
+
+
+@app.post("/portfolio", response_model=PortfolioResponse, dependencies=[Depends(verify_api_key)])
+async def portfolio(
+    file: UploadFile = File(...),                # 녹음/영상 파일 (mp4, m4a, wav ...)
+    script: str | None = Form(None),             # 대본 전문 (줄 = 대사 한 줄)
+    script_name: str | None = Form(None),        # 또는 저장된 대본 이름 (예: hercules)
+    names: str = Form(""),                       # 정확도에서 뺄 이름, 쉼표로 (예: Altman,Dario)
+):
+    """아이가 대본을 읽은 녹음을 채점: 점수(정확도 60/유창성 25/명확도 15), 다른 곳 목록, 리포트(.md)"""
+    if bool(script) == bool(script_name):
+        raise HTTPException(422, "script 또는 script_name 중 하나만 보내세요.")
+    if script_name:
+        available = {p.stem: p for p in SCRIPTS_DIR.glob("*.txt")}
+        if script_name not in available:
+            raise HTTPException(404, f"대본 '{script_name}'이 없습니다. 목록: {sorted(available)}")
+        script = available[script_name].read_text(encoding="utf-8")
+
+    try:
+        from programs.portfolio import service  # whisper는 필요할 때만 불러온다
+    except ImportError as e:
+        raise HTTPException(503, f"이 서버에는 STT 라이브러리가 설치되어 있지 않습니다: {e}")
+
+    filename = file.filename or "upload"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in service.AUDIO_EXTS:
+        raise HTTPException(415, f"지원하지 않는 파일 형식입니다: {suffix or '(없음)'}")
+
+    # 디코더가 파일 경로를 받으므로 임시 파일로 저장 (크기 제한 확인하며)
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        size = 0
+        with tmp:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_UPLOAD_MB << 20:
+                    raise HTTPException(413, f"파일이 너무 큽니다 (최대 {MAX_UPLOAD_MB}MB).")
+                tmp.write(chunk)
+        name_list = [n.strip() for n in names.split(",") if n.strip()]
+        try:
+            result = await run_in_threadpool(
+                service.grade_file, Path(tmp.name), Path(filename).stem, script, name_list)
+        except ValueError as e:  # 빈 대본, 깨진 파일, 너무 짧은 녹음
+            raise HTTPException(400, str(e))
+    finally:
+        os.unlink(tmp.name)
+
+    result["transcript"] = " ".join(w["text"] for w in result.pop("hyp"))
+    return PortfolioResponse(**result)
