@@ -1,7 +1,7 @@
 """/essay 에서 모델에게 보내는 지시문과 응답 형식.
 
 첨삭 방식 (A): 틀린 것만 고친다. 맞게 쓴 부분은 아이가 쓴 단어·표현을 그대로 둔다.
-점수·등급 계산과 HTML 생성은 서버가 한다 (모델은 JSON만 반환).
+Grammar 점수·총점·등급 계산과 HTML 생성은 서버가 한다 (모델은 JSON만 반환).
 """
 from pydantic import BaseModel, Field
 
@@ -10,7 +10,7 @@ from programs.essay.rubric import grader_persona, rubric_text
 
 
 class ModelScores(BaseModel):
-    grammar: int
+    # grammar는 서버가 고친 양으로 계산 (programs/essay/rubric.py grammar_score)
     structure: int
     content: int
 
@@ -30,7 +30,9 @@ CORRECTION_RULES = f"""How to correct (VERY IMPORTANT):
 COMMENT_RULES = """How to write the comment:
 - 2 or 3 short sentences in simple English that this student can understand.
 - Mention one thing the student did well and the most important thing to improve.
-- The comment must match the scores (for example, if Structure is low, say what part is missing)."""
+- The comment must match the scores (for example, if Structure is low, say what part is missing).
+- Grammar is scored from the number of corrections you made. If you made many corrections,
+  name the most common kind of mistake; if you made almost none, you may praise the grammar."""
 
 
 def build_messages(essay: str, topic: str | None, grade: int | None) -> list[dict]:
@@ -39,7 +41,7 @@ def build_messages(essay: str, topic: str | None, grade: int | None) -> list[dic
         "Scoring rubric:\n" + rubric_text(),
         CORRECTION_RULES,
         COMMENT_RULES,
-        "Return only JSON with: corrected, scores {grammar, structure, content}, comment.",
+        "Return only JSON with: corrected, scores {structure, content}, comment.",
     ])
     topic_line = (
         f"Assignment topic: {topic}"

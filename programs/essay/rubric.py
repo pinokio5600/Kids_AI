@@ -4,8 +4,13 @@
   - 채점자: 미국의 영어 작문 선생님
   - 학생 수준: 레벨(LevelName)에 맞는 미국 초등학교 학년 기준으로 기대치를 잡는다
   - Grammar /5 + Structure /5 + Content /10 = Total /20
+  - Grammar는 서버가 첨삭 결과(고친 곳 수)로 계산한다. 모델이 직접 매긴 문법 점수는
+    고친 양과 따로 놀았다 (같은 4점인데 100단어당 1개~28개). 같은 첨삭이면 항상 같은 점수.
+  - Structure, Content는 모델이 아래 기준표로 매긴다.
 """
+import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 
 @dataclass(frozen=True)
@@ -14,6 +19,7 @@ class Criterion:
     label: str
     max_score: int
     levels: tuple[tuple[str, str], ...]  # (점수 또는 범위, 설명)
+    by_model: bool = True                # False면 서버가 계산 (모델에게 묻지 않음)
 
 
 # ---- 레벨(DB의 levelName 값 그대로) -> 미국 초등학교 학년
@@ -108,14 +114,18 @@ You are grading essays and speeches written by young English learners.
 Judge this essay by what is expected of a U.S. {ordinal}-grade {school} student.
 Expectations for {ordinal} grade:
 {GRADE_EXPECTATIONS[g]}
-Score fairly against these expectations: do not demand more than this grade level,
-but do not overlook mistakes this grade level should already handle."""
+Score generously, like a warm and encouraging teacher of young learners:
+- Do not demand more than this grade level. An essay that answers the topic with a clear
+  beginning, middle, and end deserves full or nearly full marks, even if it is simple.
+- When you are between two scores, choose the higher one.
+- Take points off only for real problems: a missing part, going off topic, or very little content."""
 
 RUBRIC: tuple[Criterion, ...] = (
     Criterion(
         key="grammar",
         label="Grammar",
         max_score=5,
+        by_model=False,  # grammar_score()로 계산. 아래 설명은 기준 문서용
         levels=(
             ("5", "No major grammar problems. Only tiny slips, if any."),
             ("4", "A few minor mistakes that do not affect understanding."),
@@ -129,10 +139,10 @@ RUBRIC: tuple[Criterion, ...] = (
         label="Structure",
         max_score=5,
         levels=(
-            ("5", "Clear introduction, body, and conclusion, all well organized."),
-            ("4", "All three parts are present, but one part is weak."),
+            ("5", "Has an introduction, a body, and a conclusion (they can be short and simple)."),
+            ("4", "All three parts are there, but one is very weak (e.g., a conclusion of only a few words)."),
             ("3", "One of the three parts is missing."),
-            ("1-2", "Little or no clear introduction/body/conclusion."),
+            ("1-2", "No clear introduction/body/conclusion."),
         ),
     ),
     Criterion(
@@ -140,10 +150,12 @@ RUBRIC: tuple[Criterion, ...] = (
         label="Content",
         max_score=10,
         levels=(
-            ("9-10", "Stays on the lesson topic throughout and includes all expected elements."),
-            ("7-8", "On topic, but some expected elements are missing or thin."),
-            ("5-6", "Some parts drift away from the topic or the ideas are not consistent."),
-            ("1-4", "Mostly unrelated to the lesson topic."),
+            ("10", "Answers the topic and supports it with reasons or examples. Simple ideas are fine."),
+            ("9", "Answers the topic, but one reason or example is thin."),
+            ("8", "On topic, but the support is short or repeated."),
+            ("7", "On topic, but very little support (only one or two sentences of ideas)."),
+            ("5-6", "Some parts drift away from the topic or the ideas do not fit together."),
+            ("1-4", "Mostly unrelated to the topic."),
         ),
     ),
 )
@@ -151,12 +163,15 @@ RUBRIC: tuple[Criterion, ...] = (
 MAX_TOTAL = sum(c.max_score for c in RUBRIC)  # 20
 
 
+MODEL_CRITERIA = tuple(c for c in RUBRIC if c.by_model)
+
+
 def rubric_text() -> str:
+    """모델에게 보여 줄 기준표 (모델이 매기는 항목만)"""
     lines = []
-    for c in RUBRIC:
+    for c in MODEL_CRITERIA:
         lines.append(f"{c.label} (0-{c.max_score}):")
         lines += [f"  {score}: {desc}" for score, desc in c.levels]
-    lines.append(f"Total = sum of the above (0-{MAX_TOTAL}).")
     return "\n".join(lines)
 
 
@@ -169,10 +184,52 @@ def clamp(scores: dict[str, int]) -> dict[str, int]:
     return {c.key: max(0, min(c.max_score, int(scores.get(c.key, 0)))) for c in RUBRIC}
 
 
-# ---- 총점 -> 등급 (임시 기준. 채점용 데이터로 선생님 등급 분포와 비교한 뒤 조정)
+# ---- Grammar: 100단어당 실수 수 -> 점수
+# 실수 1개 = 첨삭에서 이어서 바뀐 한 덩어리. 대소문자만 / 문장부호만 고친 것은 0.5개로 센다.
+# 고학년(6~7학년) 선생님 점수 150편과 비교해 맞춤: 평균 선생님 4.19 / 계산 4.35, 1점 이내 93%
+GRAMMAR_CUTOFFS: tuple[tuple[float, int], ...] = (
+    (5, 5),    # 100단어당 5개 미만
+    (9, 4),    # 9개 미만
+    (14, 3),   # 14개 미만
+    (20, 2),   # 20개 미만
+)
+GRAMMAR_FLOOR = 1  # 20개 이상
+
+_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)*|[^\sA-Za-z0-9]")
+_WORD = re.compile(r"[A-Za-z]+")
+
+
+def count_errors(original: str, corrected: str) -> tuple[int, int]:
+    """첨삭 전후를 비교해 (큰 실수 수, 작은 실수 수)를 센다. 작은 실수 = 대소문자·문장부호만 고친 것"""
+    o = [t.replace("’", "'") for t in _TOKEN.findall(original)]
+    n = [t.replace("’", "'") for t in _TOKEN.findall(corrected)]
+    major = minor = 0
+    for op, i1, i2, j1, j2 in SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        a, b = o[i1:i2], n[j1:j2]
+        if [x.lower() for x in a] == [x.lower() for x in b] or all(not x[0].isalnum() for x in a + b):
+            minor += 1
+        else:
+            major += 1
+    return major, minor
+
+
+def grammar_score(original: str, corrected: str) -> int:
+    words = max(1, len(_WORD.findall(original)))
+    major, minor = count_errors(original, corrected)
+    per100 = (major + minor / 2) / words * 100
+    for limit, score in GRAMMAR_CUTOFFS:
+        if per100 < limit:
+            return score
+    return GRAMMAR_FLOOR
+
+
+# ---- 총점 -> 등급 (기준표 점수로 일관되게 매긴다)
+# 넉넉한 채점 기준으로 돌려 보니 A 비율: 고학년 83% (선생님 82%), 저학년 85% (선생님 77%)
 GRADE_CUTOFFS: tuple[tuple[int, str], ...] = (
-    (17, "A"),  # 17~20
-    (14, "B"),  # 14~16
+    (17, "A"),  # 17~20 (85% 이상)
+    (14, "B"),  # 14~16 (70% 이상)
     (0, "C"),   # 0~13
 )
 

@@ -192,7 +192,8 @@ class EssayRequest(BaseModel):
     topic: str | None = None        # 과제 주제 (없으면 모델이 글에서 추론)
     level_name: str | None = None   # DB levelName 그대로 (예: PurpleG, 샘물)
     model: str | None = None
-    think: bool = True              # 영어 문법 교정은 생각을 켜야 정확함
+    # 채점용 데이터 평가 결과: 생각 켬은 편당 78초에 정확도 차이가 없고 응답 실패(2/30)까지 있어서 기본은 끔
+    think: bool = False
 
 
 @app.post("/essay", response_model=EssayResponse, dependencies=[Depends(verify_api_key)])

@@ -6,7 +6,7 @@ from core.llm import DEFAULT_MODEL, NUM_CTX, ollama_chat
 from programs.essay.clean import strip_scaffolding
 from programs.essay.prompt import ModelOutput, build_messages
 from programs.essay.render import render
-from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, letter_grade, total
+from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, grammar_score, letter_grade, total
 
 
 class EssayScores(BaseModel):
@@ -28,7 +28,7 @@ class EssayResponse(BaseModel):
 
 
 async def grade_essay(essay: str, topic: str | None = None, level_name: str | None = None,
-                      model: str | None = None, think: bool = True) -> EssayResponse:
+                      model: str | None = None, think: bool = False) -> EssayResponse:
     """에세이를 첨삭(틀린 것만 고침)하고 채점해서 아이용 HTML과 함께 반환"""
     text = strip_scaffolding(essay)
     if not text:
@@ -41,7 +41,8 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
         "stream": False,
         "think": think,
         "format": ModelOutput.model_json_schema(),
-        "options": {"num_ctx": NUM_CTX, "temperature": 0},
+        # 같은 글이면 같은 결과가 나오도록 무작위성 제거
+        "options": {"num_ctx": NUM_CTX, "temperature": 0, "seed": 0},
     }
     content = await ollama_chat(payload, timeout=600)
     try:
@@ -49,10 +50,11 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
     except ValidationError:
         raise HTTPException(status_code=502, detail=f"모델 응답 형식이 잘못됐습니다: {content[:500]}")
 
-    scores = clamp(out.scores.model_dump())
+    corrected = out.corrected.strip()
+    # grammar는 모델이 고친 양으로 서버가 계산 (programs/essay/rubric.py grammar_score)
+    scores = clamp({**out.scores.model_dump(), "grammar": grammar_score(text, corrected)})
     total_score = total(scores)
     grade = letter_grade(total_score)
-    corrected = out.corrected.strip()
     rubric = {**scores, "total": total_score}
     return EssayResponse(
         html=render(text, corrected, None, out.comment.strip(), rubric, grade),

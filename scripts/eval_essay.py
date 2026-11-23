@@ -1,12 +1,18 @@
 """/essay 결과를 선생님 첨삭과 비교한다.
 
 사용법:
-  .venv/bin/python scripts/eval_essay.py run [개수] [--no-think]   # 채점용 데이터로 실행 (중단 후 이어서 가능)
-  .venv/bin/python scripts/eval_essay.py report                  # 결과 요약
+  .venv/bin/python scripts/eval_essay.py run [개수] [--no-think] [--name=이름] [--data=파일] [--rubric-only]
+      # 채점용 데이터로 실행 (중단 후 이어서 가능)
+      # --data: data/essay/processed/ 아래 jsonl (기본 essay_topic_100_eval.jsonl)
+      # --rubric-only: 선생님 점수(grammar/structure/content)가 다 있는 글만
+  .venv/bin/python scripts/eval_essay.py report                                # 결과 요약
+  .venv/bin/python scripts/eval_essay.py same 이름1 이름2                        # 두 번 돌린 결과가 같은지 (일관성)
 결과:
   data/essay/processed/eval_runs/<이름>.jsonl   한 편씩 결과
 지표:
-  - 등급 일치율: 서버가 계산한 A/B/C vs 선생님 등급
+  - 점수·등급 분포: 우리 기준표로 매긴 결과가 한쪽에 몰리지 않는지
+  - 등급 일치율: 참고용. 선생님 등급은 글 외의 요소가 섞여 있어 맞추는 목표가 아님
+  - 항목별 점수 비교: 선생님 점수가 있는 글만 (평균 차이, 일치율)
   - 수정 위치 일치: 모델이 고친 곳 중 선생님도 고친 비율(정밀도), 선생님이 고친 곳 중 모델도 고친 비율(재현율)
     (선생님은 표현 다듬기까지 하고 우리는 틀린 것만 고치므로, 재현율은 낮게 나오는 게 정상)
   - 과잉 수정: 모델이 바꾼 단어 비율 vs 선생님이 바꾼 단어 비율
@@ -44,12 +50,18 @@ def changed_positions(orig: list[str], new: list[str]) -> set[tuple]:
     return pos
 
 
-def run(limit: int | None, think: bool):
-    rows = [json.loads(l) for l in EVAL_FILE.open(encoding="utf-8")]
+def has_rubric(r: dict) -> bool:
+    return bool(r.get("rubric")) and all(r["rubric"].get(k) is not None for k in ("grammar", "structure", "content"))
+
+
+def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_only: bool):
+    rows = [json.loads(l) for l in data.open(encoding="utf-8")]
+    if rubric_only:
+        rows = [r for r in rows if has_rubric(r)]
     if limit:
         rows = rows[:limit]
     RUN_DIR.mkdir(mode=0o700, exist_ok=True)
-    out_path = RUN_DIR / f"{'think' if think else 'nothink'}.jsonl"
+    out_path = RUN_DIR / f"{name or ('think' if think else 'nothink')}.jsonl"
     done = set()
     if out_path.exists():
         done = {json.loads(l)["id"] for l in out_path.open(encoding="utf-8")}
@@ -67,7 +79,8 @@ def run(limit: int | None, think: bool):
                            "teacher_grade": r["grade"], "grade": res.grade,
                            "scores": res.scores.model_dump(), "essay": res.essay,
                            "corrected": res.corrected, "teacher_corrected": r["corrected"],
-                           "comment": res.comment, "topic": r["topic"], "level": r["level"]}
+                           "comment": res.comment, "topic": r["topic"], "level": r["level"],
+                           "teacher_scores": r["rubric"] if has_rubric(r) else None}
                 except Exception as e:  # 한 편 실패해도 계속
                     rec = {"id": r["id"], "ok": False, "error": repr(e)[:300],
                            "seconds": round(time.time() - t, 1)}
@@ -101,8 +114,18 @@ def report():
         for tg in sorted(by):
             v = by[tg]
             print(f"  model total for teacher {tg}: avg {sum(v) / len(v):.1f}  min {min(v)}  max {max(v)}")
-        for k in ("grammar", "structure", "content"):
-            print(f"  avg {k}: {sum(r['scores'][k] for r in ok) / len(ok):.2f}")
+        for k in ("grammar", "structure", "content", "total"):
+            dist = sorted(Counter(r["scores"][k] for r in ok).items())
+            print(f"  {k}: avg {sum(r['scores'][k] for r in ok) / len(ok):.2f}  " + " ".join(f"{s}:{n}" for s, n in dist))
+        tr = [r for r in ok if r.get("teacher_scores")]
+        if tr:
+            print(f"  vs teacher scores ({len(tr)} essays):")
+            for k in ("grammar", "structure", "content", "total"):
+                t = [r["teacher_scores"][k] if k != "total" else sum(r["teacher_scores"][c] for c in ("grammar", "structure", "content")) for r in tr]
+                m = [r["scores"][k] for r in tr]
+                print(f"    {k}: teacher avg {sum(t) / len(t):.2f}  model avg {sum(m) / len(m):.2f}  "
+                      f"exact {sum(a == b for a, b in zip(t, m)) / len(tr):.0%}  within1 {sum(abs(a - b) <= 1 for a, b in zip(t, m)) / len(tr):.0%}")
+        print("  grades: " + " ".join(f"{g}={n}" for g, n in sorted(Counter(r["grade"] for r in ok).items())))
         # 수정 위치
         tp = mp = tt = 0
         m_ratio = t_ratio = 0.0
@@ -120,10 +143,26 @@ def report():
         print(f"changed tokens per essay: model {m_ratio / len(ok):.1%}  teacher {t_ratio / len(ok):.1%}")
 
 
+def same(a: str, b: str):
+    load = lambda n: {r["id"]: r for r in map(json.loads, (RUN_DIR / f"{n}.jsonl").open(encoding="utf-8")) if r["ok"]}
+    ra, rb = load(a), load(b)
+    ids = sorted(ra.keys() & rb.keys())
+    print(f"common: {len(ids)}")
+    for key, f in [("scores", lambda r: r["scores"]), ("grade", lambda r: r["grade"]),
+                   ("corrected", lambda r: r["corrected"]), ("comment", lambda r: r["comment"])]:
+        n = sum(f(ra[i]) == f(rb[i]) for i in ids)
+        print(f"  same {key}: {n}/{len(ids)}")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "run":
         args = [a for a in sys.argv[2:] if not a.startswith("--")]
-        run(int(args[0]) if args else None, think="--no-think" not in sys.argv)
+        name = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--name=")), None)
+        data = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--data=")), None)
+        run(int(args[0]) if args else None, think="--no-think" not in sys.argv, name=name,
+            data=RUN_DIR.parent / data if data else EVAL_FILE, rubric_only="--rubric-only" in sys.argv)
+    elif cmd == "same":
+        same(sys.argv[2], sys.argv[3])
     else:
         report()
