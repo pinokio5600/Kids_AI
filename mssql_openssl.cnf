@@ -1,0 +1,13 @@
+# MSSQL(Ssm) 서버가 TLS 1.0/1.1만 지원해서, 에세이 배치 프로세스에서만 옛 TLS를 허용한다.
+# programs/essay/store.py 가 OPENSSL_CONF로 이 파일을 지정한다 (서버 전체 OpenSSL 설정은 그대로).
+openssl_conf = openssl_init
+
+[openssl_init]
+ssl_conf = ssl_sect
+
+[ssl_sect]
+system_default = system_default_sect
+
+[system_default_sect]
+MinProtocol = TLSv1
+CipherString = DEFAULT@SECLEVEL=0

@@ -1,0 +1,17 @@
+# 에세이 첨삭 배치 (essay-batch.timer가 새벽 2시에 실행, 수동: sudo systemctl start essay-batch)
+# 설치: sudo cp essay-batch.service essay-batch.timer /etc/systemd/system/
+#       sudo systemctl daemon-reload && sudo systemctl enable --now essay-batch.timer
+[Unit]
+Description=Essay correction batch (MSSQL -> Ollama -> MSSQL)
+After=network-online.target ollama.service
+Wants=network-online.target ollama.service
+
+[Service]
+Type=oneshot
+User=simson
+Group=simson
+WorkingDirectory=/home/simson/ai-server
+ExecStart=/home/simson/ai-server/.venv/bin/python scripts/essay_batch.py
+# 아침 수업 전에는 끝나게: 6시간 넘게 돌면 멈춘다 (남은 글은 다음 날 이어서)
+TimeoutStartSec=6h
+Nice=5

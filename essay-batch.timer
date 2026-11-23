@@ -1,0 +1,11 @@
+# 매일 새벽 2시(KST)에 essay-batch.service 실행
+[Unit]
+Description=Run essay correction batch daily at 02:00
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+# 서버가 꺼져 있어서 2시를 놓쳤으면 켜지자마자 실행
+Persistent=true
+
+[Install]
+WantedBy=timers.target

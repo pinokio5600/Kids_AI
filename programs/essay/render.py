@@ -84,8 +84,15 @@ def render_body(original: str, corrected: str, notes: list[dict] | None = None) 
             tok, space, start = b[k]
             if op == "equal":
                 out.append(_esc(tok))
+                # 모델이 줄바꿈을 빼먹거나 빈 줄을 더 넣어도(지시 위반) 바뀌지 않은 단어 뒤에서는 원문 줄 모양을 지킨다
+                orig_space = a[i1 + k - j1][1]
+                if "\n" in orig_space or "\n" in space:
+                    space = orig_space
             else:
                 out.append(f'<span style="{STYLE_INS}">{_esc(tok)}</span>')
+                # 고친 부분이 줄 끝에 걸쳐 있으면, 고친 마지막 단어 뒤에 원문 줄바꿈을 붙인다
+                if k == j2 - 1 and i2 > i1 and "\n" in a[i2 - 1][1] and "\n" not in space:
+                    space = a[i2 - 1][1]
             emit_notes(start + len(tok))
             out.append(_ws(space))
     emit_notes(len(corrected) + 1)
