@@ -4,7 +4,6 @@ from pydantic import BaseModel, ValidationError
 
 from core.llm import DEFAULT_MODEL, NUM_CTX, ollama_chat
 from programs.essay.clean import strip_scaffolding
-from programs.essay.edits import apply_edits
 from programs.essay.prompt import ModelOutput, build_messages
 from programs.essay.render import render
 from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, grammar_score, letter_grade, total
@@ -26,7 +25,6 @@ class EssayResponse(BaseModel):
     comment: str
     us_grade: int             # 채점에 적용한 미국 학년
     model: str
-    unapplied_edits: int = 0  # 모델이 준 수정 중 원문에서 위치를 못 찾아 버린 수 (모니터링용)
 
 
 async def grade_essay(essay: str, topic: str | None = None, level_name: str | None = None,
@@ -52,7 +50,7 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
     except ValidationError:
         raise HTTPException(status_code=502, detail=f"모델 응답 형식이 잘못됐습니다: {content[:500]}")
 
-    corrected, missed = apply_edits(text, out.edits)
+    corrected = out.corrected.strip()
     # grammar는 모델이 고친 양으로 서버가 계산 (programs/essay/rubric.py grammar_score)
     scores = clamp({**out.scores.model_dump(), "grammar": grammar_score(text, corrected)})
     total_score = total(scores)
@@ -67,5 +65,4 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
         comment=out.comment.strip(),
         us_grade=us_grade,
         model=model,
-        unapplied_edits=missed,
     )
