@@ -3,7 +3,7 @@
 사용법:
   .venv/bin/python scripts/eval_essay.py run [개수] [--no-think] [--name=이름] [--data=파일] [--rubric-only] [--model=모델]
       # 채점용 데이터로 실행 (중단 후 이어서 가능)
-      # --data: data/essay/processed/ 아래 jsonl (기본 essay_topic_100_eval.jsonl)
+      # --data: data/essay/processed/ 아래 jsonl (기본 essay_teacher_all_sample1200.jsonl)
       # --rubric-only: 선생님 점수(grammar/structure/content)가 다 있는 글만
       # --model: 비교할 Ollama 모델 (기본은 .env의 DEFAULT_MODEL)
   .venv/bin/python scripts/eval_essay.py report                                # 결과 요약
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from app.main import EssayRequest, essay  # noqa: E402
 
-EVAL_FILE = ROOT / "data/essay/processed/essay_topic_100_eval.jsonl"
+EVAL_FILE = ROOT / "data/essay/processed/essay_teacher_all_sample1200.jsonl"
 RUN_DIR = ROOT / "data/essay/processed/eval_runs"
 TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)*|[^\sA-Za-z0-9]")
 

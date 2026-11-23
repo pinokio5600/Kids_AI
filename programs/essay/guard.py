@@ -16,8 +16,11 @@ from difflib import SequenceMatcher
 
 from pydantic import BaseModel
 
-NEGATIONS = {"not", "no", "never", "cannot", "nor", "none", "nobody", "nothing", "neither", "nowhere"}
-_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)*|[^\sA-Za-z0-9]")
+NEGATIONS = {"not", "no", "never", "cannot", "nor", "none", "nobody", "nothing", "neither", "nowhere", "without",
+             # 아이들이 아포스트로피 없이 쓴 축약형 ("dont" -> "don't" 교정을 부정어 추가로 오판하지 않게)
+             "dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "cant", "couldnt", "wouldnt",
+             "shouldnt", "wont", "havent", "hasnt", "hadnt", "aint", "mustnt", "neednt"}
+_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’`´][A-Za-z]+)*|[^\sA-Za-z0-9]")
 _SENT_END = {".", "!", "?"}
 
 
@@ -28,7 +31,7 @@ class RevertedEdit(BaseModel):
 
 
 def _tokens(text: str) -> list[tuple[str, int]]:
-    return [(m.group().replace("’", "'"), m.start()) for m in _TOKEN.finditer(text)]
+    return [(re.sub(r"[’`´]", "'", m.group()), m.start()) for m in _TOKEN.finditer(text)]
 
 
 def _neg(words: list[str]) -> int:

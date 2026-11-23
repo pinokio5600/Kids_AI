@@ -55,6 +55,7 @@ def grade_for_level(level_name: str | None) -> int | None:
     """DB levelName -> 학년. 표에 없는 레벨이면 None.
 
     Purple로 시작하는 레벨은 모두 같은 Purple(2학년)로 본다.
+    pre로 시작하는 예비반(pre파보, pre레오, pre유마 ...)은 원래 반과 같은 학년으로 본다.
     """
     if not level_name:
         return None
@@ -63,6 +64,8 @@ def grade_for_level(level_name: str | None) -> int | None:
         return LEVEL_GRADE[name]
     if name.startswith("Purple"):
         return 2
+    if name.lower().startswith("pre") and name[3:].strip() in LEVEL_GRADE:
+        return LEVEL_GRADE[name[3:].strip()]
     return None
 
 
