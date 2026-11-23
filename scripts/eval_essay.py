@@ -83,8 +83,11 @@ def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_onl
                            "teacher_grade": r["grade"], "grade": res.grade,
                            "scores": res.scores.model_dump(), "essay": res.essay,
                            "corrected": res.corrected, "teacher_corrected": r["corrected"],
-                           "comment": res.comment, "topic": r["topic"], "level": r["level"],
-                           "teacher_scores": r["rubric"] if has_rubric(r) else None}
+                           "suggestions": res.suggestions,
+                           "topic": r["topic"], "level": r["level"],
+                           "teacher_scores": r["rubric"] if has_rubric(r) else None,
+                           "reference_suggestions": r.get("gpt_suggestions"),
+                           "reverted_edits": [x.model_dump() for x in res.reverted_edits]}
                 except Exception as e:  # 한 편 실패해도 계속
                     rec = {"id": r["id"], "ok": False, "error": repr(e)[:300],
                            "seconds": round(time.time() - t, 1)}
@@ -115,7 +118,7 @@ def report():
         by = defaultdict(list)
         for r in ok:
             by[r["teacher_grade"]].append(r["scores"]["total"])
-        for tg in sorted(by):
+        for tg in sorted(by, key=str):
             v = by[tg]
             print(f"  model total for teacher {tg}: avg {sum(v) / len(v):.1f}  min {min(v)}  max {max(v)}")
         for k in ("grammar", "structure", "content", "total"):
@@ -129,6 +132,10 @@ def report():
                 m = [r["scores"][k] for r in tr]
                 print(f"    {k}: teacher avg {sum(t) / len(t):.2f}  model avg {sum(m) / len(m):.2f}  "
                       f"exact {sum(a == b for a, b in zip(t, m)) / len(tr):.0%}  within1 {sum(abs(a - b) <= 1 for a, b in zip(t, m)) / len(tr):.0%}")
+        if any("reverted_edits" in r for r in ok):
+            rv = [x for r in ok for x in r.get("reverted_edits", [])]
+            print(f"  guard reverted: {len(rv)} edits in {sum(bool(r.get('reverted_edits')) for r in ok)} essays "
+                  f"{dict(Counter(x['reason'] for x in rv))}")
         print("  grades: " + " ".join(f"{g}={n}" for g, n in sorted(Counter(r["grade"] for r in ok).items())))
         # 수정 위치
         tp = mp = tt = 0
@@ -156,14 +163,18 @@ def compare(name: str, limit: int | None):
     recs = recs[:limit] if limit else recs
     want = {r["id"] for r in recs}
     teacher = {}
-    for src in (ROOT / "data/essay").glob("*.json"):
+    # 기존 첨삭 원본: 선생님 데이터(data/essay/*.json, id) + GPT 데이터(processed/gpt_*.json, homeworkStudentIdx)
+    sources = list((ROOT / "data/essay").glob("*.json")) + list(RUN_DIR.parent.glob("gpt_*.json"))
+    for src in sources:
         for row in json.load(src.open(encoding="utf-8")):
-            if row["id"] in want:
-                teacher[row["id"]] = row
+            rid = row.get("id", row.get("homeworkStudentIdx"))
+            if rid in want:
+                teacher[rid] = row
     cards = []
     for r in recs:
         t = teacher.get(r["id"], {})
-        ai = render(r["essay"], r["corrected"], None, r["comment"], r["scores"], r["grade"])
+        ai = render(r["essay"], r["corrected"], None, r["scores"], r["grade"],
+                    r.get("suggestions"))
         ts = r.get("teacher_scores")
         t_score = f" · 선생님 {ts['grammar']}/{ts['structure']}/{ts['content']}" if ts else ""
         s = r["scores"]
@@ -173,7 +184,7 @@ def compare(name: str, limit: int | None):
   <p class="meta">등급: 선생님 {r['teacher_grade']}{t_score} → AI {r['grade']} ({s['grammar']}/{s['structure']}/{s['content']} = {s['total']}/20) · {r['seconds']}초</p>
   <div class="cols">
     <div><h4>원문</h4><div class="box pre">{htmlmod.escape(r['essay'])}</div></div>
-    <div><h4>기존 첨삭 (선생님)</h4><div class="box">{t.get('correction', '(원본 데이터 없음)')}</div></div>
+    <div><h4>기존 첨삭 (선생님 또는 GPT)</h4><div class="box">{t.get('correction', '(원본 데이터 없음)')}</div></div>
     <div><h4>AI 첨삭</h4><div class="box">{ai}</div></div>
   </div>
 </section>""")
@@ -194,7 +205,7 @@ def same(a: str, b: str):
     ids = sorted(ra.keys() & rb.keys())
     print(f"common: {len(ids)}")
     for key, f in [("scores", lambda r: r["scores"]), ("grade", lambda r: r["grade"]),
-                   ("corrected", lambda r: r["corrected"]), ("comment", lambda r: r["comment"])]:
+                   ("corrected", lambda r: r["corrected"]), ("suggestions", lambda r: r.get("suggestions"))]:
         n = sum(f(ra[i]) == f(rb[i]) for i in ids)
         print(f"  same {key}: {n}/{len(ids)}")
 

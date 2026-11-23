@@ -4,6 +4,7 @@ from pydantic import BaseModel, ValidationError
 
 from core.llm import DEFAULT_MODEL, NUM_CTX, ollama_chat
 from programs.essay.clean import strip_scaffolding
+from programs.essay.guard import RevertedEdit, guard
 from programs.essay.prompt import ModelOutput, build_messages
 from programs.essay.render import render
 from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, grammar_score, letter_grade, total
@@ -22,7 +23,9 @@ class EssayResponse(BaseModel):
     essay: str                # 양식 정리 후 원문 (비교 기준)
     scores: EssayScores
     grade: str                # A / B / C (총점으로 서버가 계산)
-    comment: str
+    suggestions: list[str]    # Suggestions for Improvement (한 문장씩)
+    # 안전장치가 되돌린 수정 (뜻이 뒤집히거나 내용을 지어낸 것). 비어 있지 않으면 선생님 확인 권장
+    reverted_edits: list[RevertedEdit]
     us_grade: int             # 채점에 적용한 미국 학년
     model: str
 
@@ -50,19 +53,21 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
     except ValidationError:
         raise HTTPException(status_code=502, detail=f"모델 응답 형식이 잘못됐습니다: {content[:500]}")
 
-    corrected = out.corrected.strip()
+    corrected, reverted = guard(text, out.corrected.strip())
     # grammar는 모델이 고친 양으로 서버가 계산 (programs/essay/rubric.py grammar_score)
     scores = clamp({**out.scores.model_dump(), "grammar": grammar_score(text, corrected)})
     total_score = total(scores)
     grade = letter_grade(total_score)
     rubric = {**scores, "total": total_score}
+    suggestions = [x.strip() for x in out.suggestions if x.strip()]
     return EssayResponse(
-        html=render(text, corrected, None, out.comment.strip(), rubric, grade),
+        html=render(text, corrected, None, rubric, grade, suggestions),
         corrected=corrected,
         essay=text,
         scores=EssayScores(**rubric),
         grade=grade,
-        comment=out.comment.strip(),
+        suggestions=suggestions,
+        reverted_edits=reverted,
         us_grade=us_grade,
         model=model,
     )

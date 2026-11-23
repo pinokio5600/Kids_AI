@@ -101,10 +101,11 @@ def render_body(original: str, corrected: str, notes: list[dict] | None = None) 
     return body
 
 
-def render_feedback(comment: str | None, rubric: dict | None, grade: str | None) -> str:
+def render_feedback(rubric: dict | None, grade: str | None,
+                    suggestions: list[str] | None = None) -> str:
     parts = []
-    if comment:
-        parts.append(f"<p><b>Comment</b>: {_esc(comment)}</p>")
+    if suggestions:
+        parts.append(f"<p><b>Suggestions for Improvement</b>: {_esc(' '.join(suggestions))}</p>")
     if rubric:
         items = []
         for key, label, full in (("grammar", "Grammar", 5), ("structure", "Structure", 5),
@@ -120,5 +121,7 @@ def render_feedback(comment: str | None, rubric: dict | None, grade: str | None)
 
 
 def render(original: str, corrected: str, notes: list[dict] | None = None,
-           comment: str | None = None, rubric: dict | None = None, grade: str | None = None) -> str:
-    return f"<div>{render_body(original, corrected, notes)}</div>{render_feedback(comment, rubric, grade)}"
+           rubric: dict | None = None, grade: str | None = None,
+           suggestions: list[str] | None = None) -> str:
+    return (f"<div>{render_body(original, corrected, notes)}</div>"
+            f"{render_feedback(rubric, grade, suggestions)}")
