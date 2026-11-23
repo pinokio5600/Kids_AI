@@ -64,6 +64,45 @@ def parse_style(style: str) -> dict[str, str]:
     return out
 
 
+def _drop_lost_char(text: str) -> str:
+    """선생님이 색을 바꾼 자리마다 생긴 '?'를 지운다.
+
+    편집기가 색 바꾼 곳에 보이지 않는 문자(폭 없는 공백 등)를 넣고, DB 저장·내보내기에서
+    그 문자가 '?'로 바뀌었다. 빨간 글씨 맨 앞의 '?' 뒤에 바로 글자가 오거나("?ing", "?T")
+    소문자 단어가 이어지면("? with") 이 흔적으로 본다.
+    진짜 물음표("? I like")는 남긴다. "?" 단독 뒤에 소문자 단어가 오는 경우는
+    parse_teacher에서 완성된 글을 보고 지운다.
+    """
+    if not text.startswith("?"):
+        return text
+    rest = text[1:]
+    nxt = rest.lstrip(" ")[:1]
+    if rest[:1].isalnum() or nxt.islower():
+        return rest
+    return text
+
+
+# 진짜 물음표 뒤에는 올 수 없는 것들: 글자·숫자("co?untry", "?Hello"), 쉼표·마침표("Today?,"),
+# 공백 뒤 소문자 단어("efficiency? decline"). 마침표 바로 뒤 물음표(".?")도 흔적.
+LOST_MARK_PATTERNS = (
+    re.compile(r"\?+(?=[A-Za-z0-9])"),
+    re.compile(r"\?+(?=[,.;:])"),
+    re.compile(r"(?<=[.,])\?+"),
+    re.compile(r"\?+(?=[ \t]+[a-z])"),
+)
+
+
+def _drop_lost_marks(corrected: str, essay: str) -> str:
+    """완성된 첨삭 글에서 '?' 흔적을 지운다 (아이 원문에 같은 모양이 있으면 그 규칙은 건너뜀)"""
+    for pat in LOST_MARK_PATTERNS:
+        if not pat.search(essay):
+            corrected = pat.sub("", corrected)
+    return corrected
+
+
+SUFFIXES = {"s", "es", "ies", "ing", "ed", "d", "ly", "ic", "er", "est", "al", "ment", "ness"}
+
+
 class _Parser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -124,6 +163,15 @@ class _Parser(HTMLParser):
         if not text:
             return
         kind, hl = self._state()
+        if kind == "ins" and text.startswith("?"):
+            # "export " + "?ing" -> "exporting": 접미사가 흔적 뒤에 오면 앞 단어에 붙인다
+            m = re.match(r"\?([a-z]+)", text)
+            line = self.lines[-1]
+            if m and m.group(1) in SUFFIXES and line and re.search(r"[A-Za-z] $", line[-1][1]):
+                line[-1][1] = line[-1][1][:-1]
+            text = _drop_lost_char(text)
+            if not text:
+                return
         parts = text.split("\n")
         for i, part in enumerate(parts):
             if i > 0:
@@ -286,6 +334,7 @@ def parse_teacher(row: dict) -> dict:
             out += text
         corrected_lines.append(re.sub(r"[ \t]+", " ", out).strip())
     corrected = strip_scaffolding(re.sub(r"\n{3,}", "\n\n", "\n".join(corrected_lines)))
+    corrected = _drop_lost_marks(corrected, row["essay"])
 
     tail_text = "\n".join(re.sub(r"\s+", " ", "".join(s[1] for s in ln)).strip() for ln in tail)
     rubric = {}

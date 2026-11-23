@@ -7,8 +7,10 @@
       # --rubric-only: 선생님 점수(grammar/structure/content)가 다 있는 글만
   .venv/bin/python scripts/eval_essay.py report                                # 결과 요약
   .venv/bin/python scripts/eval_essay.py same 이름1 이름2                        # 두 번 돌린 결과가 같은지 (일관성)
+  .venv/bin/python scripts/eval_essay.py compare 이름 [개수]                     # 원문 / 기존 첨삭 / AI 첨삭 비교 HTML
 결과:
-  data/essay/processed/eval_runs/<이름>.jsonl   한 편씩 결과
+  data/essay/processed/eval_runs/<이름>.jsonl         한 편씩 결과
+  data/essay/processed/eval_runs/<이름>_compare.html  비교 화면 (브라우저로 열기)
 지표:
   - 점수·등급 분포: 우리 기준표로 매긴 결과가 한쪽에 몰리지 않는지
   - 등급 일치율: 참고용. 선생님 등급은 글 외의 요소가 섞여 있어 맞추는 목표가 아님
@@ -80,8 +82,7 @@ def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_onl
                            "scores": res.scores.model_dump(), "essay": res.essay,
                            "corrected": res.corrected, "teacher_corrected": r["corrected"],
                            "comment": res.comment, "topic": r["topic"], "level": r["level"],
-                           "teacher_scores": r["rubric"] if has_rubric(r) else None,
-                           "unapplied_edits": res.unapplied_edits}
+                           "teacher_scores": r["rubric"] if has_rubric(r) else None}
                 except Exception as e:  # 한 편 실패해도 계속
                     rec = {"id": r["id"], "ok": False, "error": repr(e)[:300],
                            "seconds": round(time.time() - t, 1)}
@@ -126,9 +127,6 @@ def report():
                 m = [r["scores"][k] for r in tr]
                 print(f"    {k}: teacher avg {sum(t) / len(t):.2f}  model avg {sum(m) / len(m):.2f}  "
                       f"exact {sum(a == b for a, b in zip(t, m)) / len(tr):.0%}  within1 {sum(abs(a - b) <= 1 for a, b in zip(t, m)) / len(tr):.0%}")
-        if any("unapplied_edits" in r for r in ok):
-            print(f"  unapplied edits: {sum(r.get('unapplied_edits', 0) for r in ok)} total, "
-                  f"{sum(r.get('unapplied_edits', 0) > 0 for r in ok)} essays affected")
         print("  grades: " + " ".join(f"{g}={n}" for g, n in sorted(Counter(r["grade"] for r in ok).items())))
         # 수정 위치
         tp = mp = tt = 0
@@ -145,6 +143,47 @@ def report():
         print(f"edit precision (model edits teacher also made): {tp / max(1, mp):.0%}")
         print(f"edit recall (teacher edits model also made):    {tp / max(1, tt):.0%}")
         print(f"changed tokens per essay: model {m_ratio / len(ok):.1%}  teacher {t_ratio / len(ok):.1%}")
+
+
+def compare(name: str, limit: int | None):
+    """원문 / 기존 첨삭(선생님이 만든 HTML 그대로) / AI 첨삭(아이 화면에 나갈 HTML)을 나란히"""
+    import html as htmlmod
+    from programs.essay.render import render
+
+    recs = [r for r in map(json.loads, (RUN_DIR / f"{name}.jsonl").open(encoding="utf-8")) if r["ok"]]
+    recs = recs[:limit] if limit else recs
+    want = {r["id"] for r in recs}
+    teacher = {}
+    for src in (ROOT / "data/essay").glob("*.json"):
+        for row in json.load(src.open(encoding="utf-8")):
+            if row["id"] in want:
+                teacher[row["id"]] = row
+    cards = []
+    for r in recs:
+        t = teacher.get(r["id"], {})
+        ai = render(r["essay"], r["corrected"], None, r["comment"], r["scores"], r["grade"])
+        ts = r.get("teacher_scores")
+        t_score = f" · 선생님 {ts['grammar']}/{ts['structure']}/{ts['content']}" if ts else ""
+        s = r["scores"]
+        cards.append(f"""
+<section>
+  <h3>id {r['id']} · {htmlmod.escape(r.get('level') or '')} · {htmlmod.escape(r.get('topic') or '')}</h3>
+  <p class="meta">등급: 선생님 {r['teacher_grade']}{t_score} → AI {r['grade']} ({s['grammar']}/{s['structure']}/{s['content']} = {s['total']}/20) · {r['seconds']}초</p>
+  <div class="cols">
+    <div><h4>원문</h4><div class="box pre">{htmlmod.escape(r['essay'])}</div></div>
+    <div><h4>기존 첨삭 (선생님)</h4><div class="box">{t.get('correction', '(원본 데이터 없음)')}</div></div>
+    <div><h4>AI 첨삭</h4><div class="box">{ai}</div></div>
+  </div>
+</section>""")
+    out = RUN_DIR / f"{name}_compare.html"
+    out.write_text(f"""<!doctype html><meta charset="utf-8"><title>{name} 비교</title>
+<style>body{{font-family:sans-serif;margin:20px}} .cols{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}}
+.box{{border:1px solid #ccc;padding:10px;font-size:14px;line-height:1.6;overflow-wrap:anywhere}} .pre{{white-space:pre-wrap}}
+.meta{{color:#555;font-size:13px}} section{{border-bottom:3px solid #eee;padding-bottom:20px;margin-bottom:20px}}</style>
+<p>원문 = 과제 양식을 걷어낸 아이 글 (AI가 받은 입력) · 기존 첨삭 = 선생님이 만든 HTML 그대로 · AI 첨삭 = 아이 화면에 나갈 HTML</p>
+{''.join(cards)}""", encoding="utf-8")
+    out.chmod(0o600)
+    print(f"wrote {out} ({len(cards)} essays)")
 
 
 def same(a: str, b: str):
@@ -166,6 +205,8 @@ if __name__ == "__main__":
         data = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--data=")), None)
         run(int(args[0]) if args else None, think="--no-think" not in sys.argv, name=name,
             data=RUN_DIR.parent / data if data else EVAL_FILE, rubric_only="--rubric-only" in sys.argv)
+    elif cmd == "compare":
+        compare(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else None)
     elif cmd == "same":
         same(sys.argv[2], sys.argv[3])
     else:
