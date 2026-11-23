@@ -80,7 +80,8 @@ def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_onl
                            "scores": res.scores.model_dump(), "essay": res.essay,
                            "corrected": res.corrected, "teacher_corrected": r["corrected"],
                            "comment": res.comment, "topic": r["topic"], "level": r["level"],
-                           "teacher_scores": r["rubric"] if has_rubric(r) else None}
+                           "teacher_scores": r["rubric"] if has_rubric(r) else None,
+                           "unapplied_edits": res.unapplied_edits}
                 except Exception as e:  # 한 편 실패해도 계속
                     rec = {"id": r["id"], "ok": False, "error": repr(e)[:300],
                            "seconds": round(time.time() - t, 1)}
@@ -125,6 +126,9 @@ def report():
                 m = [r["scores"][k] for r in tr]
                 print(f"    {k}: teacher avg {sum(t) / len(t):.2f}  model avg {sum(m) / len(m):.2f}  "
                       f"exact {sum(a == b for a, b in zip(t, m)) / len(tr):.0%}  within1 {sum(abs(a - b) <= 1 for a, b in zip(t, m)) / len(tr):.0%}")
+        if any("unapplied_edits" in r for r in ok):
+            print(f"  unapplied edits: {sum(r.get('unapplied_edits', 0) for r in ok)} total, "
+                  f"{sum(r.get('unapplied_edits', 0) > 0 for r in ok)} essays affected")
         print("  grades: " + " ".join(f"{g}={n}" for g, n in sorted(Counter(r["grade"] for r in ok).items())))
         # 수정 위치
         tp = mp = tt = 0

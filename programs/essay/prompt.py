@@ -6,6 +6,7 @@ Grammar 점수·총점·등급 계산과 HTML 생성은 서버가 한다 (모델
 from pydantic import BaseModel, Field
 
 from core.grammar.rules import FIX_RULES
+from programs.essay.edits import Edit
 from programs.essay.rubric import grader_persona, rubric_text
 
 
@@ -16,7 +17,8 @@ class ModelScores(BaseModel):
 
 
 class ModelOutput(BaseModel):
-    corrected: str = Field(description="The full essay with only the errors fixed.")
+    # 글 전체 대신 고친 부분만 받는다 (답이 짧아져 빠름). 서버가 원문에 적용: programs/essay/edits.py
+    edits: list[Edit] = Field(description="Every error fix, in the order they appear in the essay.")
     scores: ModelScores
     comment: str = Field(description="Short overall comment for the student.")
 
@@ -24,8 +26,16 @@ class ModelOutput(BaseModel):
 # 공통 교정 규칙(core/grammar/rules.py) + 에세이 전용 규칙
 CORRECTION_RULES = f"""How to correct (VERY IMPORTANT):
 {FIX_RULES}
-- Keep the same line breaks and paragraph order as the original.
-- Return the WHOLE essay in "corrected", including sentences that needed no changes."""
+
+How to report corrections in "edits" (do NOT rewrite the whole essay):
+- One item per error, in the order the errors appear in the essay.
+- "original": copy the words EXACTLY as the student wrote them (same spelling, capitalization,
+  and punctuation), including the error and 1-3 words around it so the place is clear.
+  Keep it inside one line of the essay.
+- "corrected": the same words with only the error fixed.
+  Example: {{"original": "I go to school yesterday", "corrected": "I went to school yesterday"}}
+  Example: {{"original": "my friend and me played", "corrected": "My friend and I played"}}
+- Do not list parts that are already correct. If there are no errors, return an empty list."""
 
 COMMENT_RULES = """How to write the comment:
 - 2 or 3 short sentences in simple English that this student can understand.
@@ -41,7 +51,7 @@ def build_messages(essay: str, topic: str | None, grade: int | None) -> list[dic
         "Scoring rubric:\n" + rubric_text(),
         CORRECTION_RULES,
         COMMENT_RULES,
-        "Return only JSON with: corrected, scores {structure, content}, comment.",
+        "Return only JSON with: edits, scores {structure, content}, comment.",
     ])
     topic_line = (
         f"Assignment topic: {topic}"
