@@ -1,10 +1,11 @@
 """/essay 결과를 선생님 첨삭과 비교한다.
 
 사용법:
-  .venv/bin/python scripts/eval_essay.py run [개수] [--no-think] [--name=이름] [--data=파일] [--rubric-only]
+  .venv/bin/python scripts/eval_essay.py run [개수] [--no-think] [--name=이름] [--data=파일] [--rubric-only] [--model=모델]
       # 채점용 데이터로 실행 (중단 후 이어서 가능)
       # --data: data/essay/processed/ 아래 jsonl (기본 essay_topic_100_eval.jsonl)
       # --rubric-only: 선생님 점수(grammar/structure/content)가 다 있는 글만
+      # --model: 비교할 Ollama 모델 (기본은 .env의 DEFAULT_MODEL)
   .venv/bin/python scripts/eval_essay.py report                                # 결과 요약
   .venv/bin/python scripts/eval_essay.py same 이름1 이름2                        # 두 번 돌린 결과가 같은지 (일관성)
   .venv/bin/python scripts/eval_essay.py compare 이름 [개수]                     # 원문 / 기존 첨삭 / AI 첨삭 비교 HTML
@@ -56,7 +57,8 @@ def has_rubric(r: dict) -> bool:
     return bool(r.get("rubric")) and all(r["rubric"].get(k) is not None for k in ("grammar", "structure", "content"))
 
 
-def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_only: bool):
+def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_only: bool,
+        model: str | None = None):
     rows = [json.loads(l) for l in data.open(encoding="utf-8")]
     if rubric_only:
         rows = [r for r in rows if has_rubric(r)]
@@ -76,7 +78,7 @@ def run(limit: int | None, think: bool, name: str | None, data: Path, rubric_onl
                 t = time.time()
                 try:
                     res = await essay(EssayRequest(essay=r["essay_raw"], topic=r["topic"],
-                                                   level_name=r["level"], think=think))
+                                                   level_name=r["level"], think=think, model=model))
                     rec = {"id": r["id"], "ok": True, "seconds": round(time.time() - t, 1),
                            "teacher_grade": r["grade"], "grade": res.grade,
                            "scores": res.scores.model_dump(), "essay": res.essay,
@@ -204,7 +206,8 @@ if __name__ == "__main__":
         name = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--name=")), None)
         data = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--data=")), None)
         run(int(args[0]) if args else None, think="--no-think" not in sys.argv, name=name,
-            data=RUN_DIR.parent / data if data else EVAL_FILE, rubric_only="--rubric-only" in sys.argv)
+            data=RUN_DIR.parent / data if data else EVAL_FILE, rubric_only="--rubric-only" in sys.argv,
+            model=next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--model=")), None))
     elif cmd == "compare":
         compare(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else None)
     elif cmd == "same":
