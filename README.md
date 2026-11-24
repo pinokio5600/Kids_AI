@@ -33,8 +33,7 @@ data/                 아이들 데이터 (git 제외, 아래 참고)
 
 - `.env`에 `DEFAULT_MODEL`이 없으면 코드 기본값 `qwen3.5:9b`(MTP 없는 버전)를 쓴다 (`core/llm.py`).
 - 이 서버에 받아 둔 Ollama 모델: `qwen3.5:9b-mtp-q4_K_M` (사용 중), `qwen3.5:9b` (미사용, 비교용)
-- 실험 중 (서비스에 안 씀): 에세이 파인튜닝. 원본 `Qwen/Qwen3.5-9B`를 8bit로 올려 LoRA 학습
-  (`scripts/train_essay_lora.py`, 결과는 `models/`, git 제외). 1,200편 평가에서 지금 모델보다 나을 때만 교체한다.
+- 2026-11-24 파인튜닝(Qwen3.5-9B 8bit LoRA)을 두 번 시도했지만 지금 모델보다 낫지 않아 쓰지 않았고, 실험 파일은 모두 지웠다.
 
 ## AI 서버
 
