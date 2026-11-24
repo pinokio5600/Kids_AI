@@ -18,3 +18,6 @@ reports/
 .vscode/
 .idea/
 *.log
+.venv-train/
+models/
+unsloth_compiled_cache/

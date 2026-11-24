@@ -21,6 +21,21 @@ data/                 아이들 데이터 (git 제외, 아래 참고)
 
 모든 명령은 저장소 루트에서 실행한다.
 
+## 사용 모델
+
+**모델을 바꾸면 이 표부터 고친다.** (마지막 수정: 2026-11-24)
+
+| 용도 | 모델 | 어디서 정하나 | 비고 |
+|---|---|---|---|
+| 에세이 첨삭·채점 (API `/essay`, 새벽 2시 배치) | Ollama `qwen3.5:9b-mtp-q4_K_M` (4bit, MTP) | `.env` `DEFAULT_MODEL` | temperature 0, seed 0, thinking 끔, `NUM_CTX` 16384 |
+| 문법 교정 `/grammar`, 대화 `/chat` | 위와 같음 | `.env` `DEFAULT_MODEL` | 요청에 `model`을 넣으면 그 모델 사용 |
+| 포트폴리오 받아쓰기 (STT) | faster-whisper `large-v3` | `.env` `STT_MODEL` (기본 large-v3), `STT_DEVICE` (기본 cuda) | 첫 요청 때 불러옴 |
+
+- `.env`에 `DEFAULT_MODEL`이 없으면 코드 기본값 `qwen3.5:9b`(MTP 없는 버전)를 쓴다 (`core/llm.py`).
+- 이 서버에 받아 둔 Ollama 모델: `qwen3.5:9b-mtp-q4_K_M` (사용 중), `qwen3.5:9b` (미사용, 비교용)
+- 실험 중 (서비스에 안 씀): 에세이 파인튜닝. 원본 `Qwen/Qwen3.5-9B`를 8bit로 올려 LoRA 학습
+  (`scripts/train_essay_lora.py`, 결과는 `models/`, git 제외). 1,200편 평가에서 지금 모델보다 나을 때만 교체한다.
+
 ## AI 서버
 
 - 실행: `.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000` (운영은 `ai-server.service`로 systemd 등록)
