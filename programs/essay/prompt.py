@@ -18,7 +18,7 @@ class ModelScores(BaseModel):
 class ModelOutput(BaseModel):
     corrected: str = Field(description="The full essay with only the errors fixed.")
     scores: ModelScores
-    suggestions: list[str] = Field(description="3-4 concrete suggestions for improvement, one sentence each.")
+    suggestions: list[str] = Field(description="2-4 concrete suggestions for improvement, one sentence each.")
 
 
 # 공통 교정 규칙(core/grammar/rules.py) + 에세이 전용 규칙
@@ -32,9 +32,12 @@ CORRECTION_RULES = f"""How to correct (VERY IMPORTANT):
 - Keep the same line breaks and paragraph order as the original.
 - Return the WHOLE essay in "corrected", including sentences that needed no changes."""
 
-# GPT가 써 온 "Suggestions for Improvement" 100건을 보고 맞춘 형식 (3~5문장, 한 문장에 10단어 안팎)
+# GPT가 써 온 "Suggestions for Improvement" 100건을 보고 맞춘 형식 (한 문장에 10단어 안팎).
+# 예시 문장을 넣었더니 모델이 글과 상관없이 그대로 베껴서 뺐다. 개수는 2~4개 (채우려고 지어내지 않게).
 SUGGESTION_RULES = """How to write "suggestions" (Suggestions for Improvement):
-- 3 or 4 items. Each item is ONE short sentence (about 8-15 words) that tells the student what to do.
+- 2 to 4 items. Each item is ONE short sentence (about 8-15 words) that tells the student what to do.
+  Write as many as THIS essay really needs: more for an essay with many problems, fewer for a
+  strong one. Never invent an item just to fill the list.
 - Each item covers a DIFFERENT area, chosen from what this essay actually needs:
   content (reasons, examples, staying on topic, repetition), organization (introduction, conclusion,
   transition words), grammar (name the main type of mistake you corrected), word choice or sentence variety.
@@ -42,14 +45,15 @@ SUGGESTION_RULES = """How to write "suggestions" (Suggestions for Improvement):
 - Talk about PATTERNS and skills, not single words. The student already sees each corrected word
   in red, so do NOT write items like "Change 'go' to 'went'" or "Spell 'because' correctly".
   At most ONE item may be about grammar or spelling, and it should name the type of mistake
-  (e.g., "Pay attention to past tense verbs.").
+  (e.g., "Pay attention to past tense verbs."). Write it ONLY if you actually corrected that type of
+  mistake in this essay more than once; if you corrected almost nothing, write no grammar item.
 - The suggestions must match the scores (for example, if Structure is low, say which part is
   missing or weak). Use simple words the student can understand. No praise.
-Example items:
-  "Try to avoid repeating the same reason more than once."
-  "Use transition words to link your ideas more smoothly."
-  "Pay attention to subject-verb agreement and sentence clarity."
-  "Make sure your concluding sentence matches your main argument."
+- Never tell the student to add or fix something the essay already does well (e.g., do not ask for
+  examples if each reason already has one, or for transition words if they are already used).
+- If an area already has a full score, do not point out problems in it. For a strong essay, suggest
+  a next step that would make it even better (e.g., answer a possible counterargument, explain
+  an example in more depth, use more varied sentence structures or more precise words).
 """
 
 
