@@ -21,3 +21,4 @@ reports/
 .venv-train/
 models/
 unsloth_compiled_cache/
+.venv-debate/
