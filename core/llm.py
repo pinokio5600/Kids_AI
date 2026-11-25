@@ -8,7 +8,7 @@ from fastapi import HTTPException
 load_dotenv()
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3.5:9b")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3.5:9b-mtp-q4_K_M")
 # 모델이 한 번에 읽을 수 있는 토큰 수 (Ollama 기본값 4096은 대화가 길어지면 부족)
 NUM_CTX = int(os.getenv("NUM_CTX", "16384"))
 
