@@ -9,13 +9,39 @@ from pathlib import Path
 
 
 def add_cuda_dlls():
-    """Windows: make pip-installed cuBLAS/cuDNN DLLs visible to ctranslate2."""
-    if sys.platform != "win32":
+    """Make pip-installed cuBLAS/cuDNN libraries visible to ctranslate2."""
+    if sys.platform == "win32":
+        nvidia_root = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+        for bin_dir in nvidia_root.glob("*/bin"):
+            os.add_dll_directory(str(bin_dir))
+            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
+    elif sys.platform.startswith("linux"):
+        _preload_linux_cuda()
+
+
+def _preload_linux_cuda():
+    """Linux: LD_LIBRARY_PATH is read only at process start, so load the libraries by hand.
+    Once loaded, ctranslate2's own dlopen("libcublas.so.12") finds them by name."""
+    import ctypes
+    try:
+        import nvidia
+    except ImportError:
         return
-    nvidia_root = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
-    for bin_dir in nvidia_root.glob("*/bin"):
-        os.add_dll_directory(str(bin_dir))
-        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
+    libs = []
+    for root in map(Path, nvidia.__path__):
+        libs += sorted((root / "cublas" / "lib").glob("libcublas*.so.12"))
+        libs += sorted((root / "cudnn" / "lib").glob("libcudnn*.so.9"))
+    # Some libraries need others loaded first; retry until nothing more loads.
+    while libs:
+        left = []
+        for lib in libs:
+            try:
+                ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                left.append(lib)
+        if len(left) == len(libs):
+            break
+        libs = left
 
 
 add_cuda_dlls()

@@ -22,3 +22,5 @@ reports/
 models/
 unsloth_compiled_cache/
 .venv-debate/
+.venv-asrtest/
+.venv-canary/

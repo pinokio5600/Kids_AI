@@ -8,6 +8,9 @@
       ("...was clear", "Claudia from The Baby-Sitters Club", "[to act violently]", "some may not be treated equally")
   - deleted_words: 문장에서 내용어가 3개 이상 아예 사라짐 (반복된 말 지우기·어순 바꾸기는 통과)
       ("And you can see every day!" 통째 삭제, 문장 끝 잘라 먹기)
+  - added_words(절): 원문 문장에 없던 접속사(if, because, when ...)와 함께 3단어 이상 새 절을 붙임
+      ("...not understand the homework" -> "... if they are tired")
+  - name: 원문의 한글 단어(반 이름 등)를 지우거나 바꿈 ("in 티카 AT" -> "in Class AT")
   - name: 문장 중간의 대문자 단어 중 흔한 단어(common_words.txt)가 아닌 것을 철자가 많이 다른 말로 바꾸거나 지움
       ("Gunham-do" -> "Dokdo", 사람 이름을 다른 이름으로, 이름 삭제). 철자 고치기(Japen -> Japan, GSP -> GPS)는 통과.
       문장째 되돌리는 이유: 모델이 "지우기 + 넣기" 두 덩어리로 바꾼 경우 하나만 되돌리면 글이 중복된다.
@@ -27,7 +30,12 @@ NEGATIONS = {"not", "no", "never", "cannot", "nor", "none", "nobody", "nothing",
              # 아이들이 아포스트로피 없이 쓴 축약형 ("dont" -> "don't" 교정을 부정어 추가로 오판하지 않게)
              "dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "cant", "couldnt", "wouldnt",
              "shouldnt", "wont", "havent", "hasnt", "hadnt", "aint", "mustnt", "neednt"}
-_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’`´][A-Za-z]+)*|[^\sA-Za-z0-9]")
+# 한글은 한 덩어리로 (반 이름 "티카", "샘물1M" 등. 글자마다 쪼개지면 이름 보호가 안 된다)
+_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['’`´][A-Za-z]+)*|[가-힣]+|[^\sA-Za-z0-9]")
+_HANGUL = re.compile(r"[가-힣]")
+# 원문 문장에 없던 접속사로 절을 새로 붙이면 내용을 지어낸 것 ("... the homework" -> "... the homework if they are tired")
+CLAUSE_CONJ = {"if", "because", "when", "while", "although", "though", "unless", "since", "whereas"}
+MIN_CLAUSE = 3  # 접속사 포함 이만큼 늘어나면 새 절로 본다
 _SENT_END = {".", "!", "?"}
 
 
@@ -98,6 +106,20 @@ def _close(a: str, b: str) -> bool:
     return len(a) == len(b) and sum(x != y for x, y in zip(a, b)) <= 1
 
 
+_CLASS_CODE = re.compile(r"^\d*[A-Z]{1,3}\d*$")  # 반 코드: 1M, AT, M, 5M
+
+
+def _name_slot(ow: list[str], k: int) -> bool:
+    """ow[k]가 자기소개 이름이나 반 이름 자리인가"""
+    prev = [w.lower() for w in ow[max(0, k - 3):k]]
+    nxt = ow[k + 1] if k + 1 < len(ow) else ""
+    if _CLASS_CODE.match(nxt):                     # 여울1M, 티카 AT, 샘물 M
+        return True
+    if prev[-1:] in (["i'm"], ["im"]) or prev[-2:] == ["i", "am"]:
+        return True                                # I'm 시연 / I am 시연
+    return prev[-2:] == ["name", "is"] or prev[-1:] == ["called"]  # my name is 정아
+
+
 def _content(words) -> list[str]:
     return [w.lower() for w in words if w[:1].isalpha() and w.lower() not in _FUNCTION]
 
@@ -111,10 +133,26 @@ def _op_reasons(o, c, oq, cq, i1, i2, j1, j2, sent, o_words, c_words) -> list[st
     def is_new(w):  # 철자 고치기(cumputer -> computer), 띄어쓰기(hardwork -> hard work)는 새 내용이 아니다
         return w not in o_words and not any(w in x or _close(w, x) for x in o_words if len(x) > 2)
     added = [w for w in _content(new) if is_new(w)]
-    if len(added) > MAX_ADDED or any(w in ("[", "(") for w in new) and not any(w in ("[", "(") for w in old):
+    # 한글 단어를 영어로 옮긴 것 (세월호 -> Sewol, 연합뉴스 -> Yonhap News)은 덧붙이기가 아니다:
+    # 문장의 한글 단어 수만큼은 새 영어 단어로 치지 않는다
+    hangul_n = sum(bool(_HANGUL.match(x)) for x in o_words)
+    if any(_HANGUL.match(w) for w in old):
+        added = []
+    elif hangul_n:
+        added = added[2 * hangul_n:]
+    # 새 절: 원문 문장에 없던 접속사 + 원문에 없던 내용어. 아이 말을 접속사로 정리하는 교정
+    # ("people eat only vegetables then they feel bad" -> "... feel bad when they eat only vegetables")는 통과
+    def conj_in_original(w):  # "becauseif"처럼 붙여 쓴 것도 원문에 있는 걸로 본다
+        return any(x == w or x.startswith(w) or x.endswith(w) for x in o_words)
+    new_clause = (len(new) - len(old) >= MIN_CLAUSE and added and
+                  any(w.lower() in CLAUSE_CONJ and not conj_in_original(w.lower()) for w in new))
+    if len(added) > MAX_ADDED or new_clause or \
+            any(w in ("[", "(") for w in new) and not any(w in ("[", "(") for w in old):
         why.append("added_words")
     # 지우기: 첨삭 문장에서 아예 사라진 내용어가 MAX_DELETED개 넘음 (반복된 말 지우기, 어순 바꾸기는 통과)
-    if len([w for w in _content(old) if w not in c_words and not any(w in x or _close(w, x) for x in c_words if len(x) > 2)]) > MAX_DELETED:
+    # (한글 단어가 영어로 옮겨져 사라진 것은 삭제로 치지 않는다)
+    if len([w for w in _content(old) if not _HANGUL.match(w) and w not in c_words
+            and not any(w in x or _close(w, x) for x in c_words if len(x) > 2)]) > MAX_DELETED:
         why.append("deleted_words")
     # 따옴표: 따로 떨어진 따옴표 토큰을 넣거나 빼거나 바꾸고, 나머지 단어는 (대소문자 빼고) 그대로
     q_old = [k for k in range(i1, i2) if k in oq]
@@ -124,6 +162,10 @@ def _op_reasons(o, c, oq, cq, i1, i2, j1, j2, sent, o_words, c_words) -> list[st
         rest_new = [cw[k].lower() for k in range(j1, j2) if k not in cq]
         if rest_old == rest_new:
             why.append("quote")
+    # 자기소개·반 이름 자리의 한글을 지우거나 바꿈 ("in 티카 AT" -> "in Class AT", "in 여울1M" -> "in Navy 1M",
+    # "I'm 시연" -> "I'm Siyeon"). 다른 한글 단어(시위, 호날두 ...)는 영어로 바꿔도 된다 (2026-11-26 사용자 결정)
+    if any(_HANGUL.match(ow[k]) and ow[k] not in new and _name_slot(ow, k) for k in range(i1, i2)):
+        why.append("name")
     # 이름: 문장 중간의 대문자 단어 중 흔한 단어가 아닌 것을, 철자가 비슷하지 않은 말로 바꾸거나 지움
     # (괄호 안 과제 양식 "(Reason)", "[Job]"을 지우는 건 괜찮다)
     if not any(w in _TEMPLATE for w in old):
@@ -204,7 +246,13 @@ def guard(original: str, corrected: str) -> tuple[str, list[RevertedEdit]]:
             if old and not old[-1].isspace() and new[-1:].isspace():
                 old += new[len(new.rstrip()):]
             # 되돌린 자리 앞 띄어쓰기는 원문을 따른다: 단어가 붙거나("speechis") 기호 앞에 공백이 생기지 않게
-            if 0 < i1 < len(o):
+            if 0 < i1 < len(o) and not old:
+                # 끼워 넣기만 한 수정을 되돌림: 원문에서 다음 토큰 앞이 붙어 있으면 앞 공백도 지운다 ("homework ." 방지)
+                if not original[o[i1][1] - 1:o[i1][1]].isspace():
+                    prev = "".join(out)
+                    if prev[-1:] == " ":
+                        out[:] = [prev.rstrip(" ")]
+            elif 0 < i1 < len(o):
                 orig_space = original[o[i1][1] - 1:o[i1][1]].isspace()
                 prev = "".join(out)
                 if orig_space and prev and not prev[-1].isspace():

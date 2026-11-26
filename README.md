@@ -13,7 +13,7 @@ core/                 핵심 기능: 여러 프로그램이 같이 쓴다
 programs/             프로그램: core를 가져다 쓴다
   essay/              에세이 첨삭·채점
   portfolio/          포트폴리오 영상(대본 읽기) 채점
-  debate/             디베이트 영상 분석 (개발 중, 아래 "디베이트" 참고)
+  debate/             디베이트 영상 -> 아이별 발언 기록 (개발 중, 아래 "디베이트" 참고)
 scripts/              개발용 스크립트 (선생님 데이터 변환, 에세이 평가)
 data/                 아이들 데이터 (git 제외, 아래 참고)
 ```
@@ -65,9 +65,14 @@ curl -H "X-API-Key: $KEY" -F file=@kid.mp4 -F script_name=hercules http://localh
 
 에세이 (`programs/essay/`)
 - 흐름: `clean.py` 과제 양식 정리 -> `prompt.py` 지시문 (core/grammar/rules.py 포함) -> `grade.py` 모델 호출·점수 -> `render.py` 첨삭 HTML
+- `clean.py`: Topic 줄·과제 안내문·빈칸 밑줄은 지우고, 단락 제목(Intro / Body 1 / Conclusion)은 남긴다 (2026-11-26)
+- `suggest_guard.py`: 글이 이미 잘한 것(연결어 3개 이상, 예시, 결론)을 하라는 개선 제안과 "however" 예시를 지운다.
+  2026-11-26 배치에서 88%에 같은 연결어 제안이 붙던 문제. 제안 프롬프트를 고쳐 보니 첨삭까지 바뀌고 오류를 놓쳐서
+  (블라인드 비교 지금 38 : 새 17) 프롬프트는 그대로 두고 코드로만 거른다
 - 채점 기준·레벨별 학년: `rubric.py`
 - 선생님 첨삭 데이터 변환: `scripts/build_teacher_dataset.py`
 - 선생님 첨삭과 비교 평가: `scripts/eval_essay.py`
+- 배치 결과 꺼내기 (읽기만): `.venv/bin/python scripts/essay_export.py [--date YYYY-MM-DD]` -> `data/essay/exports/<날짜>.html` (원문 / AI 첨삭 카드, 브라우저로 열기)
 
 ## STT / 포트폴리오 채점
 
@@ -91,6 +96,10 @@ curl -H "X-API-Key: $KEY" -F file=@kid.mp4 -F script_name=hercules http://localh
 
 한 영상에 여러 아이가 순서대로 발언한 디베이트 영상을 아이별로 나눠 분석한다.
 
+**디베이트는 첨삭하지 않고 채점만 한다.** 아이별 Logic 50 / Delivery 25 / Role 25.
+받아쓰기는 말한 내용과 논리를 알아보는 용도라, 받아쓰기 모델이 아이의 문법 실수를 고쳐 적어도 괜찮다.
+중요한 건 핵심 단어(근거, 고유명사, 찬반, 역할 이름)를 맞게 받아쓰는 것이다.
+
 영상 규칙
 - 발언 순서는 항상 **찬성 → 반대 → 찬성 → …** 번갈아. 아이 한 명이 한 번씩 발언한다.
 - 인원은 정해져 있지 않다 (2명, 5명, 8명 …). 홀수일 수도 있다.
@@ -99,26 +108,42 @@ curl -H "X-API-Key: $KEY" -F file=@kid.mp4 -F script_name=hercules http://localh
 - 그래서 관리화면에서 **팀별 인원**을 받는다 (예: `[6, 5]`). 총 인원만으로는 뒤 팀 찬/반이 뒤집힐 수 있다.
 - 아이 이름은 쓰지 않고 팀마다 1번, 2번 …으로 부른다.
 
-처리 흐름 (계획)
-1. 영상 URL → 서버로 다운로드 (`data/debate/video/`) → 음성 추출 (PyAV, 16kHz mono)
-2. 화자 분리 (pyannote). 팀별 인원 합계를 `num_speakers`로 넘긴다
-3. 화면 전환 지점으로 발언 시작 시각 보정 (클립 경계 = 발언 경계인 경우가 많다)
-4. 받아쓰기 (whisper). 화자가 안 붙은 말은 바로 다음 화자에게 붙인다
-5. 처음 말한 순서대로 팀별 인원만큼 자르고, 팀마다 홀수 번 = 찬성, 짝수 번 = 반대
-6. 찾은 화자 수 ≠ 인원 합계, 또는 찬/반 번갈이가 깨지면 "확인 필요"
+발언 기록 만들기 (`programs/debate/`)
+```
+.venv-debate/bin/python -m programs.debate.cli "data/debate/video/영상.mp4" --teams 6,5
+.venv-debate/bin/python -m programs.debate.cli "https://.../영상.mp4" --teams 4   # URL이면 data/debate/video/로 받음
+```
+- 결과: `data/debate/outputs/<영상 이름>/transcript.md` (선생님이 읽는 기록, `[단어?]` = 확실하지 않음),
+  `transcript.json` (단어별 시각, 화자 분리 원본 포함). 화면에는 시간·번호·찬반만 찍는다
+- 흐름: `media.py` 다운로드·음성 추출(PyAV 16kHz)·화면 전환 찾기 -> `diarize.py` 화자 분리(팀별 인원 합계를 화자 수로 넘김)
+  -> `transcript.py` 받아쓰기(whisper, core/stt/engine.py) -> 단어마다 화자 붙이기 -> 팀별로 자르고 번호·찬반
+- 단어에 화자 붙이기: 겹치는 화자 구간 → 화자 구간 밖의 말(작게 시작한 말)은 화면 전환이 있으면 거기서 나누고
+  없으면 다음 화자에게 → 화자가 바뀌는 곳 3초 안에 화면 전환이 있으면 그 지점으로 옮김
+  → 화자가 바뀌기 4초 안에 "Hello"가 있으면 거기서부터 다음 화자 (발언은 모두 "Hello everyone"으로 시작)
+- "확인 필요": 찾은 화자 수 ≠ 입력 인원, 5초 미만만 말한 화자, 한 화자가 여러 번 나뉘어 나옴 (두 아이가 합쳐졌을 수 있음)
 
 첫 시험 (2026-11-25, 14분 43초 합본 영상, 팀 6명 + 5명)
 - 인원을 알려 주지 않고도 화자 11명을 정확히 찾음. GPU에서 18초
 - 틀린 곳: 2번 시작이 8초 늦게 잡힘 (작게 시작한 말을 놓침). whisper는 그 말을 잡았고, 화면 전환(1:34.6)도 실제 시작과 맞음
+- 발언 기록까지 전체 1분 정도 (화자 분리 21초, 받아쓰기 33초). 위 보정으로 2번 시작이 1:35로 맞게 나옴
+- 받아쓰기 불확실 단어: 2팀 2~4%, 1팀 7~15% (1팀 녹음 소리가 작음)
+
+토론 자료 (`data/debate/topics/`, 학원 교재라 git 제외)
+- 찬성·반대 주장/근거/증거 자료. 아이들은 이걸 **그대로 읽지 않고 자기 말로** 발언한다
+  (첫 시험에서 아이별 받아쓰기와 자료 단락의 세 단어 연속 일치가 0~27%)
+- 그래서 포트폴리오처럼 대본과 맞춰 보는 채점은 안 된다. 나중에 내용 평가(근거를 맞게 썼는지)에 쓴다
+- whisper 힌트(hotwords)로 넣어 봤지만 쓰지 않는다: 자료 단어 55개, 고유명사 11개 둘 다
+  불확실 단어가 늘고 발언 일부(최대 65단어)가 통째로 빠졌다. 맞힌 고유명사는 1~3개뿐
 
 설치 (서비스용 `.venv`와 따로 둔다)
 ```
 python3 -m venv .venv-debate
-.venv-debate/bin/pip install pyannote.audio==4.1.1 faster-whisper==1.2.1 python-dotenv \
-    nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"
+.venv-debate/bin/pip install pyannote.audio==4.1.1 faster-whisper==1.2.1 python-dotenv nvidia-cublas-cu12
 ```
-- whisper는 pip로 받은 CUDA 12 라이브러리를 써서 `LD_LIBRARY_PATH`에
-  `.venv-debate/lib/python3.14/site-packages/nvidia/{cublas,cudnn}/lib`를 넣어야 한다
+- whisper(ctranslate2)는 CUDA 12 cuBLAS가 필요해서 `nvidia-cublas-cu12`를 따로 넣는다. cuDNN은 torch가 가져온
+  `nvidia-cudnn-cu13`을 같이 쓴다. **`nvidia-cudnn-cu12`는 설치하지 않는다** (같은 폴더에 덮어써서 torch 쪽 cuDNN이 바뀜)
+- 리눅스에서는 `core/stt/engine.py`가 이 라이브러리들을 직접 불러 와서 `LD_LIBRARY_PATH`가 필요 없다
+- PyAV는 최신(19)을 쓴다. faster-whisper의 `decode_audio`는 PyAV 16+에서 깨지므로 음성은 `programs/debate/media.py`로 꺼낸다
 - pyannote 모델은 HuggingFace 약관 동의가 필요하다: `pyannote/speaker-diarization-community-1`,
   `pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`. 읽기 전용 토큰을 `.env` `HF_TOKEN`에 넣고
   처음 한 번 받으면 `~/.cache/huggingface`에 남는다. 이후에는 `HF_HUB_OFFLINE=1`로 돌릴 수 있다
@@ -138,4 +163,6 @@ data/
     outputs/        받아쓰기 결과 (기본 저장 위치)
   debate/
     video/          디베이트 영상 (학원 서버에서 받은 것)
+    outputs/        발언 기록 (영상마다 폴더: transcript.md, transcript.json)
+    topics/         토론 자료 (주제별 .txt)
 ```

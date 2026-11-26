@@ -13,9 +13,18 @@
 import re
 
 SECTION = r"(?:introduction|intro|body|conclusion|closing|opening)"
+# 단락 번호: "Body 1", "Body1", "Body #2", "Body paragraph 1", "Body II"
+# (2026-11-26: "Body 1"에서 "Body"만 지우고 "1"이 아이 화면에 남던 문제)
+_NUM = r"(?:\s*(?:paragraph\s*)?#?\s*\d{1,2}\b|\s+(?:paragraph\s+)?[IV]{1,3}\b|\s+paragraph\b)?"
 _MARKER = re.compile(
-    rf"^\s*[♡♥★☆•*]?\s*(?:[<〈\[(（]\s*{SECTION}\s*[)）\]〉>]|{SECTION}\b)\s*[:：\-–]?\s*", re.I
+    rf"^\s*[♡♥★☆•*]?\s*(?:"
+    rf"[<〈\[(（]\s*{SECTION}{_NUM}\s*[)）\]〉>]\s*[:：\-–]?"  # [Body 1] / <Intro>
+    rf"|{SECTION}{_NUM}\s*(?:[:：\-–]|$)"                    # Body 1 / Intro: ... (줄 끝이나 구분 기호까지)
+    rf")\s*",
+    re.I,
 )
+# 괄호 없는 제목은 그 줄에 제목만 있거나 뒤에 : - 가 올 때만 제목으로 본다.
+# "Body language is important."나 "Introduction of new rules ..." 같은 아이 문장은 그대로 둔다.
 
 # 줄 전체를 지우는 패턴
 _DROP_LINE = [
@@ -47,11 +56,10 @@ def strip_scaffolding(text: str) -> str:
         if any(p.search(line) for p in _DROP_LINE):
             continue
         m = _MARKER.match(line)
-        if m:
-            rest = line[m.end():]
-            if not rest.strip() or _HINT_AFTER_MARKER.match(rest):
-                continue  # 단락 제목만 있거나, 제목 + 안내문인 줄
-            line = rest
+        if m and _HINT_AFTER_MARKER.match(line[m.end():]):
+            # 단락 제목 + 과제 안내문: 안내문만 지우고 제목은 남긴다
+            # (2026-11-26 사용자 결정: Intro / Body / Conclusion 같은 단락 제목은 지우지 않는다)
+            line = re.sub(r"[\s:：\-–]+$", "", m.group(0)).strip()
         line = _EX_HINT.sub("", line)
         line = _PAREN.sub(_drop_korean_paren, line)
         if "_" in line:  # 빈칸 채우기 밑줄

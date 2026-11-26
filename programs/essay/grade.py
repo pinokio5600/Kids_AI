@@ -8,6 +8,7 @@ from programs.essay.guard import RevertedEdit, guard
 from programs.essay.prompt import ModelOutput, build_messages
 from programs.essay.render import render
 from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, grammar_score, letter_grade, total
+from programs.essay.suggest_guard import filter_suggestions
 
 
 class EssayScores(BaseModel):
@@ -59,7 +60,8 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
     total_score = total(scores)
     grade = letter_grade(total_score)
     rubric = {**scores, "total": total_score}
-    suggestions = [x.strip() for x in out.suggestions if x.strip()]
+    # 글이 이미 잘한 것을 하라는 제안(연결어·예시·결론)은 지운다 (programs/essay/suggest_guard.py)
+    suggestions, _ = filter_suggestions(text, [x.strip() for x in out.suggestions if x.strip()])
     return EssayResponse(
         html=render(text, corrected, None, rubric, grade, suggestions),
         corrected=corrected,

@@ -117,6 +117,28 @@ def fetch_by_ids(conn, ids: list[int]) -> list[PendingEssay]:
     return out
 
 
+# 결과 확인용 (읽기만): 배치가 처리한 글의 원본·첨삭본·등급, 그 뒤 선생님이 고쳤는지(CorrectMpIdx)
+SQL_RESULT = """
+SELECT a.HomeWorkStudentIdx, L.LevelName, a.Writing, a.ReWriting, a.Eval, a.CorrectMpIdx, a.GptCorrectDt
+FROM HC_HomeWork_Student a
+JOIN P_Class b ON b.ClassIdx = a.ClassIdx
+LEFT JOIN C_LevelName L ON L.LevelNameIdx = b.LevelNameIdx
+WHERE a.HomeWorkStudentIdx = ?
+"""
+
+
+def fetch_results(conn, ids: list[int]) -> list[dict]:
+    cur = conn.cursor()
+    out = []
+    for i in ids:
+        cur.execute(SQL_RESULT, i)
+        r = cur.fetchone()
+        if r:
+            out.append({"id": r[0], "level": r[1], "writing": r[2], "rewriting": r[3], "eval": r[4],
+                        "edited_by_teacher": r[5] not in (None, SYSTEM_MPIDX), "corrected_on": r[6]})
+    return out
+
+
 def save(conn, essay_id: int, html: str, grade: str) -> bool:
     """저장했으면 True. 그 사이 선생님이 고쳐서 조건에 안 맞으면 False"""
     # 첨삭 컬럼이 varchar(Korean_Wansung)라서 ’ “ — 같은 문자는 저장하면 "?"로 깨진다
