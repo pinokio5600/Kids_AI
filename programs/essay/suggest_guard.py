@@ -22,6 +22,9 @@ _SUG_TRANSITION = re.compile(r"transition|linking words?|connecting words?|conne
 _SUG_EXAMPLE = re.compile(r"\b(?:add|give|include|use|provide|support\b.*\bwith)\b.*\bexamples?\b", re.I)
 _SUG_EXAMPLE_DEEPER = re.compile(r"\bexplain\b|\bdepth\b|\bdetail|\bmore specific|\bdevelop|\bpersonal\b", re.I)
 _SUG_CONCLUSION = re.compile(r"\b(?:add|write|include|make)\b.*\bconclusion\b|\brestate\b|\bsumm(?:ary|arize)\b.*\bend\b", re.I)
+# 쉼표 제안: "Use commas after introductory words like 'First' and 'Second'"
+_SUG_COMMA_INTRO = re.compile(r"comma.*\b(?:introductory|first|second|then|also|but|so|because)\b", re.I)
+_INTRO_WITH_COMMA = re.compile(r"\b(?:first(?:ly)?|second(?:ly)?|third(?:ly)?|next|finally|lastly|also|for example|in conclusion|however),", re.I)
 # "'however' or 'furthermore'"에서 however만 뺀다 (이유와 이유 사이에 however는 틀린 조언)
 _HOWEVER_EXAMPLE = re.compile(r"'however'\s*(?:,|or|and)\s*|\s*(?:,|or|and)\s*'however'", re.I)
 
@@ -50,8 +53,27 @@ def filter_suggestions(essay: str, suggestions: list[str]) -> tuple[list[str], l
         if _SUG_EXAMPLE.search(s) and not _SUG_EXAMPLE_DEEPER.search(s) and facts["has_example"]:
             dropped.append((s, "이미 예시 있음"))
             continue
+        if _SUG_COMMA_INTRO.search(s) and len(_INTRO_WITH_COMMA.findall(essay)) >= 2:
+            dropped.append((s, "이미 First, 등 뒤에 쉼표 사용"))
+            continue
         if _SUG_CONCLUSION.search(s) and facts["has_conclusion"]:
             dropped.append((s, "이미 결론 있음"))
             continue
         kept.append(s)
     return kept, dropped
+
+
+def facts_text(essay: str) -> str:
+    """제안 호출에 넣을 '이 글이 이미 한 것' (구체적인 사실을 주면 9B 모델이 이미 한 걸 덜 제안한다)"""
+    f = essay_facts(essay)
+    done = []
+    if f["transitions"]:
+        done.append("uses these transition words: " + ", ".join(f["transitions"]))
+    if f["has_example"]:
+        done.append("already gives examples")
+    if f["has_conclusion"]:
+        done.append("already has a conclusion")
+    if not done:
+        return ""
+    return ("Facts about this essay (checked by a program): it " + "; it ".join(done) +
+            ".\nDo not suggest adding or using anything listed in these facts.")

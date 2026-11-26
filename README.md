@@ -24,11 +24,11 @@ data/                 아이들 데이터 (git 제외, 아래 참고)
 
 ## 사용 모델
 
-**모델을 바꾸면 이 표부터 고친다.** (마지막 수정: 2026-11-25)
+**모델을 바꾸면 이 표부터 고친다.** (마지막 수정: 2026-11-26)
 
 | 용도 | 모델 | 어디서 정하나 | 비고 |
 |---|---|---|---|
-| 에세이 첨삭·채점 (API `/essay`, 새벽 2시 배치) | Ollama `qwen3.5:9b-mtp-q4_K_M` (4bit, MTP) | `.env` `DEFAULT_MODEL` | temperature 0, seed 0, thinking 끔, `NUM_CTX` 16384 |
+| 에세이 첨삭·채점 (API `/essay`, 새벽 2시 배치) | Ollama `qwen3.5:9b-mtp-q4_K_M` (4bit, MTP) | `.env` `DEFAULT_MODEL` | temperature 0, seed 0, thinking 끔, `NUM_CTX` 16384. 한 편에 호출 2번: 첨삭·채점 → 개선 제안 (2026-11-26부터) |
 | 문법 교정 `/grammar`, 대화 `/chat` | 위와 같음 | `.env` `DEFAULT_MODEL` | 요청에 `model`을 넣으면 그 모델 사용 |
 | 포트폴리오 받아쓰기 (STT) | faster-whisper `large-v3` | `.env` `STT_MODEL` (기본 large-v3), `STT_DEVICE` (기본 cuda) | 첫 요청 때 불러옴 |
 | 디베이트 화자 분리 (개발 중) | pyannote.audio 4.1.1 `pyannote/speaker-diarization-community-1` | 코드 | `.venv-debate`, 처음 한 번 `.env` `HF_TOKEN`으로 받음. 이후 서버 캐시에서 실행 |
@@ -66,7 +66,9 @@ curl -H "X-API-Key: $KEY" -F file=@kid.mp4 -F script_name=hercules http://localh
 에세이 (`programs/essay/`)
 - 흐름: `clean.py` 과제 양식 정리 -> `prompt.py` 지시문 (core/grammar/rules.py 포함) -> `grade.py` 모델 호출·점수 -> `render.py` 첨삭 HTML
 - `clean.py`: Topic 줄·과제 안내문·빈칸 밑줄은 지우고, 단락 제목(Intro / Body 1 / Conclusion)은 남긴다 (2026-11-26)
-- `suggest_guard.py`: 글이 이미 잘한 것(연결어 3개 이상, 예시, 결론)을 하라는 개선 제안과 "however" 예시를 지운다.
+- 개선 제안은 첨삭이 끝난 뒤 따로 호출해서 만든다 (`prompt.py` `build_suggestion_messages`): 고친 글·점수·'이미 한 것'을 보고 실제 실수를 짚는다.
+  블라인드 40편 비교 분리 18 : 기존 7 (비슷 15). 350편 배치에 약 5분 더 걸린다. 첨삭 호출 프롬프트는 그대로 둔다
+- `suggest_guard.py`: 글이 이미 잘한 것(연결어 3개 이상, 예시, 결론, First, 뒤 쉼표)을 하라는 개선 제안과 "however" 예시를 지운다.
   2026-11-26 배치에서 88%에 같은 연결어 제안이 붙던 문제. 제안 프롬프트를 고쳐 보니 첨삭까지 바뀌고 오류를 놓쳐서
   (블라인드 비교 지금 38 : 새 17) 프롬프트는 그대로 두고 코드로만 거른다
 - 채점 기준·레벨별 학년: `rubric.py`

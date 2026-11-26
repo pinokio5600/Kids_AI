@@ -5,10 +5,10 @@ from pydantic import BaseModel, ValidationError
 from core.llm import DEFAULT_MODEL, NUM_CTX, ollama_chat
 from programs.essay.clean import strip_scaffolding
 from programs.essay.guard import RevertedEdit, guard
-from programs.essay.prompt import ModelOutput, build_messages
+from programs.essay.prompt import ModelOutput, SuggestionOutput, build_messages, build_suggestion_messages
 from programs.essay.render import render
 from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, grammar_score, letter_grade, total
-from programs.essay.suggest_guard import filter_suggestions
+from programs.essay.suggest_guard import facts_text, filter_suggestions
 
 
 class EssayScores(BaseModel):
@@ -60,8 +60,23 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
     total_score = total(scores)
     grade = letter_grade(total_score)
     rubric = {**scores, "total": total_score}
-    # 글이 이미 잘한 것을 하라는 제안(연결어·예시·결론)은 지운다 (programs/essay/suggest_guard.py)
-    suggestions, _ = filter_suggestions(text, [x.strip() for x in out.suggestions if x.strip()])
+    # 개선 제안은 고친 글과 점수를 보고 따로 만든다 (첨삭 호출이 함께 낸 제안은 이 호출이 실패할 때만 쓴다).
+    # 글이 이미 잘한 것을 하라는 제안(연결어·예시·결론·쉼표)은 지운다 (programs/essay/suggest_guard.py)
+    raw = [x.strip() for x in out.suggestions if x.strip()]
+    try:
+        sug_payload = {
+            "model": model,
+            "messages": build_suggestion_messages(text, corrected, scores, us_grade, facts_text(text)),
+            "stream": False,
+            "think": False,
+            "format": SuggestionOutput.model_json_schema(),
+            "options": {"num_ctx": NUM_CTX, "temperature": 0, "seed": 0},
+        }
+        sug = SuggestionOutput.model_validate_json(await ollama_chat(sug_payload, timeout=300))
+        raw = [x.strip() for x in sug.suggestions if x.strip()] or raw
+    except (HTTPException, ValidationError):
+        pass
+    suggestions, _ = filter_suggestions(text, raw)
     return EssayResponse(
         html=render(text, corrected, None, rubric, grade, suggestions),
         corrected=corrected,

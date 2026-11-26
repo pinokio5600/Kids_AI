@@ -72,3 +72,35 @@ def build_messages(essay: str, topic: str | None, grade: int | None) -> list[dic
     )
     user = f"{topic_line}\n\nStudent essay:\n{essay}"
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+# ---- 개선 제안 전용 호출 (2026-11-26) ----
+# 첨삭 호출(build_messages)은 그대로 두고 제안만 따로 만든다. 같은 호출에서 제안 지시를 바꾸면 첨삭까지
+# 바뀌고 잡던 오류를 놓쳤다 (블라인드 비교 지금 38 : 새 17). 따로 만들면 고친 글을 보고 실제 실수를 짚어서
+# 제안이 나아졌다 (블라인드 40편: 분리 18 : 기존 7, 비슷 15). 350편에 약 5분 더 걸린다.
+# 영역 목록에 "transition words"를 예로 두면 모델이 거의 모든 글에 연결어 제안을 붙여서 뺐다.
+SUGGESTION_ONLY_RULES = SUGGESTION_RULES.replace(
+    "organization (introduction, conclusion,\n  transition words)", "organization (introduction, body, conclusion)")
+
+
+class SuggestionOutput(BaseModel):
+    suggestions: list[str] = Field(description="2-4 concrete suggestions for improvement, one sentence each.")
+
+
+def build_suggestion_messages(essay: str, corrected: str, scores: dict, grade: int | None,
+                              facts: str = "") -> list[dict]:
+    """essay: 양식 정리한 원문, corrected: 안전장치를 거친 첨삭 글, scores: grammar/structure/content,
+    facts: 프로그램이 확인한 '이 글이 이미 한 것' (suggest_guard.facts_text)"""
+    system = "\n\n".join([
+        grader_persona(grade),
+        "Scoring rubric:\n" + rubric_text(),
+        SUGGESTION_ONLY_RULES,
+        'Return only JSON: {"suggestions": [...]}',
+    ])
+    user = (f"Student essay:\n{essay}\n\n"
+            f"The same essay with only the errors fixed (the student sees these fixes in red):\n{corrected}\n\n"
+            f"Scores given: Grammar {scores['grammar']}/5, Structure {scores['structure']}/5, "
+            f"Content {scores['content']}/10.")
+    if facts:
+        user += f"\n\n{facts}"
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
