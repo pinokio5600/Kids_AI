@@ -26,6 +26,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from programs.essay.align import opcodes as align_opcodes
+from programs.essay.rubric import LEVEL_GRADE
+
 NEGATIONS = {"not", "no", "never", "cannot", "nor", "none", "nobody", "nothing", "neither", "nowhere", "without",
              # 아이들이 아포스트로피 없이 쓴 축약형 ("dont" -> "don't" 교정을 부정어 추가로 오판하지 않게)
              "dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "cant", "couldnt", "wouldnt",
@@ -81,6 +84,7 @@ all each other another one ones such own same up out over""".split())
 
 _COMMON = {w for w in (Path(__file__).with_name("common_words.txt").read_text(encoding="utf-8").split())
            if not w.startswith("#")}
+COMMON_WORDS = _COMMON  # suggest_guard에서도 쓴다 (철자 제안 확인)
 _TEMPLATE = set("([<{")
 # 아포스트로피 없이 쓴 축약형 (Im -> I'm)
 _NO_APOS = {"im", "ive", "id", "ill", "youre", "theyre", "hes", "shes", "thats", "whats", "lets", "its"} | NEGATIONS
@@ -106,13 +110,17 @@ def _close(a: str, b: str) -> bool:
     return len(a) == len(b) and sum(x != y for x, y in zip(a, b)) <= 1
 
 
-_CLASS_CODE = re.compile(r"^\d*[A-Z]{1,3}\d*$")  # 반 코드: 1M, AT, M, 5M
+_CLASS_CODE = re.compile(r"^\d*[A-Z][A-Za-z]{0,2}\d*$")  # 반 코드: 1M, AT, M, 5M, At (2026-11-27 "유마At" -> "Yuma At")
+# 학원 레벨(반) 이름은 어디에 있든 이름으로 본다 (programs/essay/rubric.py LEVEL_GRADE)
+_LEVEL_NAMES = {k for k in LEVEL_GRADE if _HANGUL.search(k)}
 
 
 def _name_slot(ow: list[str], k: int) -> bool:
     """ow[k]가 자기소개 이름이나 반 이름 자리인가"""
     prev = [w.lower() for w in ow[max(0, k - 3):k]]
     nxt = ow[k + 1] if k + 1 < len(ow) else ""
+    if any(ow[k].startswith(n) or ow[k].removeprefix("pre").startswith(n) for n in _LEVEL_NAMES):
+        return True                                # 유마, 레오, pre파보 ...
     if _CLASS_CODE.match(nxt):                     # 여울1M, 티카 AT, 샘물 M
         return True
     if prev[-1:] in (["i'm"], ["im"]) or prev[-2:] == ["i", "am"]:
@@ -190,7 +198,10 @@ def guard(original: str, corrected: str) -> tuple[str, list[RevertedEdit]]:
         return corrected, []
     ow, cw = [t for t, _ in o], [t for t, _ in c]
     sent = _sentence_ids(o, original)
-    opcodes = SequenceMatcher(None, ow, cw, autojunk=False).get_opcodes()
+    # 대소문자는 빼고, 순서를 지키는 LCS로 맞춘다 (programs/essay/align.py): "nobel prize"를 10번 쓴 글에서 모두 "Nobel Prize"로 고치면 대소문자까지 비교할 때
+    # 줄 맞춤이 어긋나 여러 문장에 걸친 큰 덩어리가 생기고, 부정어 개수가 문장마다 엇갈려 글 전체가 되돌려졌다
+    # (2026-11-27 id 10670461). 대소문자 교정은 equal 구간에서 첨삭 글 그대로 나간다.
+    opcodes = align_opcodes([w.lower() for w in ow], [w.lower() for w in cw])
     ops = [op for op in opcodes if op[0] != "equal"]
 
     # 수정 덩어리마다: 속한 문장(시작 위치 기준), 문제 종류
@@ -248,10 +259,13 @@ def guard(original: str, corrected: str) -> tuple[str, list[RevertedEdit]]:
             # 되돌린 자리 앞 띄어쓰기는 원문을 따른다: 단어가 붙거나("speechis") 기호 앞에 공백이 생기지 않게
             if 0 < i1 < len(o) and not old:
                 # 끼워 넣기만 한 수정을 되돌림: 원문에서 다음 토큰 앞이 붙어 있으면 앞 공백도 지운다 ("homework ." 방지)
+                prev = "".join(out)
                 if not original[o[i1][1] - 1:o[i1][1]].isspace():
-                    prev = "".join(out)
                     if prev[-1:] == " ":
                         out[:] = [prev.rstrip(" ")]
+                elif prev and not prev[-1].isspace():
+                    # 원문은 띄어 썼는데 넣은 것("Hello, my"의 ", ")만 빠지면 붙어 버린다 ("Hellomy")
+                    old = original[o[i1][1] - 1:o[i1][1]]
             elif 0 < i1 < len(o):
                 orig_space = original[o[i1][1] - 1:o[i1][1]].isspace()
                 prev = "".join(out)

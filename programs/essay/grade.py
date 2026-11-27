@@ -5,7 +5,9 @@ from pydantic import BaseModel, ValidationError
 from core.llm import DEFAULT_MODEL, NUM_CTX, ollama_chat
 from programs.essay.clean import strip_scaffolding
 from programs.essay.guard import RevertedEdit, guard
-from programs.essay.prompt import ModelOutput, SuggestionOutput, build_messages, build_suggestion_messages
+from programs.essay.mistakes import mistake_types, mistakes_text
+from programs.essay.prompt import (MAX_SUGGESTIONS, ModelOutput, SuggestionOutput, build_messages,
+                                   build_suggestion_messages, suggestion_band)
 from programs.essay.render import render
 from programs.essay.rubric import DEFAULT_GRADE, clamp, grade_for_level, grammar_score, letter_grade, total
 from programs.essay.suggest_guard import facts_text, filter_suggestions
@@ -61,12 +63,14 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
     grade = letter_grade(total_score)
     rubric = {**scores, "total": total_score}
     # 개선 제안은 고친 글과 점수를 보고 따로 만든다 (첨삭 호출이 함께 낸 제안은 이 호출이 실패할 때만 쓴다).
+    # 제안 호출에는 프로그램이 센 '실제로 고친 실수 종류'를 같이 준다 (programs/essay/mistakes.py)
     # 글이 이미 잘한 것을 하라는 제안(연결어·예시·결론·쉼표)은 지운다 (programs/essay/suggest_guard.py)
     raw = [x.strip() for x in out.suggestions if x.strip()]
     try:
         sug_payload = {
             "model": model,
-            "messages": build_suggestion_messages(text, corrected, scores, us_grade, facts_text(text)),
+            "messages": build_suggestion_messages(text, corrected, scores, us_grade, facts_text(text),
+                                                  mistakes_text(mistake_types(text, corrected))),
             "stream": False,
             "think": False,
             "format": SuggestionOutput.model_json_schema(),
@@ -76,7 +80,8 @@ async def grade_essay(essay: str, topic: str | None = None, level_name: str | No
         raw = [x.strip() for x in sug.suggestions if x.strip()] or raw
     except (HTTPException, ValidationError):
         pass
-    suggestions, _ = filter_suggestions(text, raw)
+    suggestions, _ = filter_suggestions(text, raw, corrected)
+    suggestions = suggestions[:MAX_SUGGESTIONS[suggestion_band(us_grade)]]  # 학년별 개수 (낮은 레벨은 2개까지)
     return EssayResponse(
         html=render(text, corrected, None, rubric, grade, suggestions),
         corrected=corrected,

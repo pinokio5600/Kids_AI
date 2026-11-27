@@ -9,7 +9,8 @@
 """
 import html
 import re
-from difflib import SequenceMatcher
+
+from programs.essay.align import opcodes
 
 STYLE_DEL = "color: rgb(255, 0, 0); text-decoration: line-through;"
 STYLE_INS = "color: rgb(255, 0, 0); font-weight: bold;"
@@ -65,8 +66,7 @@ def render_body(original: str, corrected: str, notes: list[dict] | None = None) 
             for text in note_at.pop(pending.pop(0)):
                 out.append(f' <span style="{STYLE_NOTE}">({_esc(text)})</span>')
 
-    sm = SequenceMatcher(None, [_norm(t[0]) for t in a], [_norm(t[0]) for t in b], autojunk=False)
-    for op, i1, i2, j1, j2 in sm.get_opcodes():
+    for op, i1, i2, j1, j2 in opcodes([_norm(t[0]) for t in a], [_norm(t[0]) for t in b]):
         if op in ("delete", "replace"):
             deleted = re.sub(r"\s+", " ", "".join(t + s for t, s, _ in a[i1:i2])).strip()
             is_word = deleted[:1].isalnum()

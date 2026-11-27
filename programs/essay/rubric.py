@@ -10,7 +10,7 @@
 """
 import re
 from dataclasses import dataclass
-from difflib import SequenceMatcher
+from programs.essay.align import opcodes as align_opcodes
 
 
 @dataclass(frozen=True)
@@ -207,7 +207,7 @@ def count_errors(original: str, corrected: str) -> tuple[int, int]:
     o = [t.replace("’", "'") for t in _TOKEN.findall(original)]
     n = [t.replace("’", "'") for t in _TOKEN.findall(corrected)]
     major = minor = 0
-    for op, i1, i2, j1, j2 in SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
+    for op, i1, i2, j1, j2 in align_opcodes(o, n):
         if op == "equal":
             continue
         a, b = o[i1:i2], n[j1:j2]

@@ -15,9 +15,13 @@ from pathlib import Path
 
 from programs.debate import media
 from programs.debate.diarize import diarize, load_pipeline
-from programs.debate.transcript import _ts, build, render_md, transcribe_words
+from programs.debate.transcript import (HOLE, _ts, build, drop_host_words, find_host, render_md,
+                                        split_speeches, transcribe_words)
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "debate"
+# seconds of audio added on each side of a hole before transcribing it again. Each is tried and the
+# result with more words kept: on quiet audio whisper is unsteady and no one width was best on all videos
+PADS = (1.0, 5.0)
 
 
 def run(src, team_sizes=None, out_root=DATA_DIR / "outputs", use_cuts=True, device="cuda", log=print):
@@ -45,12 +49,52 @@ def run(src, team_sizes=None, out_root=DATA_DIR / "outputs", use_cuts=True, devi
     from core.stt.engine import load_model
     model = load_model("large-v3", device)
     words = transcribe_words(model, audio)
+    duration = len(audio) / media.SR
+    n = total or len({k for *_, k in turns})
+    speeches = split_speeches(words, turns, cuts, n, duration)
+    host = find_host(turns, speeches)
+    if host:
+        speeches = split_speeches(words, turns, cuts, n, duration, host)
+    kid_words, host_words = drop_host_words(words, turns, host)
+
+    def between(ws, a, b):
+        return [w for w in ws if a <= (w["start"] + w["end"]) / 2 < b]
+
+    filled = 0
+    for sp in speeches:
+        ws = between(kid_words, sp["start"], sp["end"])
+        heard = between(words, sp["start"], sp["end"])  # with the teacher's: their turns aren't holes
+        # The whole-video pass skips quiet stretches (a child's first 27 seconds, once 90 seconds).
+        # Transcribe only those holes again and put the words in. Re-doing the whole speech is
+        # worse: whisper on a cut-out piece is unsteady and can lose what the first pass had.
+        edges = [sp["start"]] + [x for w in heard for x in (w["start"], w["end"])] + [sp["end"]]
+        for a, b in zip(edges[::2], edges[1::2]):
+            if b - a < HOLE:
+                continue
+            tries = []
+            for pad in PADS:
+                lo, hi = max(0.0, a - pad), min(duration, b + pad)
+                tries.append(between(transcribe_words(model, audio[int(lo * media.SR):int(hi * media.SR)], offset=lo), a, b))
+            new, more_host = drop_host_words(max(tries, key=len), turns, host)
+            host_words += more_host
+            heard += new + more_host
+            ws += new
+            filled += len(new)
+        sp["words"] = sorted(ws, key=lambda w: w["start"])
+        heard.sort(key=lambda w: w["start"])
+        edges = [sp["start"]] + [x for w in heard for x in (w["start"], w["end"])] + [sp["end"]]
+        sp["missing"] = round(sum(b - a for a, b in zip(edges[::2], edges[1::2]) if b - a >= HOLE), 1)
     del model
     gc.collect()
-    log(f"받아쓰기 {len(words)}단어 ({time.time() - t0:.0f}초)")
+    log(f"받아쓰기 발언 {len(speeches)}개, {sum(len(sp['words']) for sp in speeches)}단어, 빈 곳에서 {filled}단어 더 찾음 ({time.time() - t0:.0f}초)")
 
-    result = build(words, turns, cuts, team_sizes)
-    result.update(video=str(path), words=words, duration=round(len(audio) / media.SR, 1),
+    result = build(speeches, team_sizes)
+    if not team_sizes:
+        result["checks"].append(f"팀별 인원을 넣지 않아 화자 분리로 찾은 {n}명으로 나눔")
+    if host:
+        result["checks"].append(f"선생님 목소리로 보이는 화자({host})의 말 {len(host_words)}단어는 발언 기록에서 뺌")
+    result["host"] = {"label": host, "words": sorted(host_words, key=lambda w: w["start"])}
+    result.update(video=str(path), words=words, duration=round(duration, 1),
                   team_sizes=team_sizes,
                   cuts=cuts, turns=[[round(a, 2), round(b, 2), k] for a, b, k in turns])
 
@@ -70,10 +114,11 @@ def summary(result):
     """Times, numbers, roles only - no transcript text."""
     lines = []
     for team in result["teams"]:
-        lines.append(f"[{team['team']}팀]" if team["team"] else "[팀 밖]")
+        lines.append(f"[{team['team']}팀]")
         for s in team["speakers"]:
-            head = f"{s['no']:>2}번 {s['role']}" if team["team"] else f"   {s['label']}"
-            lines.append(f"  {head}  {_ts(s['start']):>5} ~ {_ts(s['end']):>5}  {s['seconds']:5.0f}초  {s['words']:4d}단어  불확실 {s['unsure'] / max(s['words'], 1):5.1%}")
+            bad = "  채점 보류" if s["unreliable"] else ""
+            lines.append(f"  {s['no']:>2}번 {s['role']}  {_ts(s['start']):>5} ~ {_ts(s['end']):>5}  {s['seconds']:5.0f}초  "
+                         f"{s['words']:4d}단어  분당 {s['wpm']:3d}  불확실 {s['unsure'] / max(s['words'], 1):5.1%}{bad}")
     if result["checks"]:
         lines.append("확인 필요:")
         lines += [f"  - {c}" for c in result["checks"]]
